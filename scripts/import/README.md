@@ -127,13 +127,40 @@ both carry data the spreadsheet doesn't:
     imports/DefectFree_Pessoal.csv
   ```
 
-  Same total-verification guard as the Quadro extractor. These 232 rows import
-  **UNMATCHED on purpose**: the portal's personnel table has no activity or
-  Nº ordem column, and inferring the activity from the free-text description was
-  tested against the approved table's per-activity totals and did not reconcile
-  (the grand total matched, every individual activity did not). A wrong rubrica
-  is worse than an unassigned one, so they are linked through the reconciliation
-  screen instead.
+  Same total-verification guard as the Quadro extractor.
+
+- `imports/DefectFree_Pessoal_Atividades.txt` — the one field that table omits:
+  the activity each movement was imputed to. It is transcribed by hand from the
+  portal's per-technician "Movimentos de despesa" screens, tab-separated as
+  `Mov / Ano-mês / Atividade / ETI / Valor`, with the technician headers kept so
+  it can be checked against the screen it came from. The import joins it on the
+  movement id and **refuses to run** if any movement disagrees with the export
+  on month or amount, which is what makes a hand transcription safe to rely on.
+
+  With it, an activity approved as a single budget line is linked outright and
+  one the funder split into annual lines is left AMBIGUOUS with those lines as
+  candidates (score capped at 80: the rubrica family is certain, the annual line
+  is not). For Defect Free that is 106 rows / 109 730,51 € linked and 126 rows /
+  217 862,20 € awaiting a choice. Without the file every row stays UNMATCHED —
+  inferring the activity from the free-text description was tested against the
+  approved table's per-activity totals and did not reconcile, so it is not done.
+
+- `imports/DefectFree_Deslocacoes.csv` — travel declared without a supplier
+  invoice (per-diem style), transcribed from the portal's "Deslocações" screen.
+  These rows are absent from the Movimentos export, so without them the travel
+  rubricas sit below what was declared. `pp-deslocacoes.ts` imports them as
+  invoices with no supplier, links them by Nº ordem, and then **verifies that
+  every travel rubrica now equals its declared amount**, failing the run if it
+  does not — the whole point of transcribing them by hand is to close that gap
+  exactly.
+
+### Funder decisions
+
+`pp-decisoes.ts` records a decision on a payment request together with the
+analysis document itself (`imports/DefectFree_Decisao_PP3.pdf`, stored as an
+attachment). The figures are typed into `scripts/import/index.ts` rather than
+parsed: these are prose documents with no fixed layout, a few per year, and a
+number read from a mis-parsed sentence would be worse than one nobody typed.
 
 ### Payment requests are derived, never assumed
 
@@ -147,18 +174,23 @@ portal export disproved it.
 ### Verifying against the portal
 
 The Quadro CSV's declared-executed column is loaded per line, so the project
-page can show, per rubrica, what the funder was told versus what this platform
-holds. For Defect Free that currently surfaces exactly two gaps, totalling
-333 816,71 €:
+page shows, per rubrica, what the funder was told next to what this platform
+holds, and lists every divergence above a cent.
 
-- **327 592,71 €** — the 232 personnel rows, imported but not yet assigned to a
-  rubrica (see above).
-- **6 224,00 €** — travel on Nº ordem 42 (1 385,00 €) and 46 (4 839,00 €)
-  declared to the funder without a corresponding invoice in the Movimentos
-  export, i.e. per-diem style costs. Needs the portal's travel export to close.
+Everything reconciles to the cent except one thing: approved 789 615,87 €,
+declared executed 497 707,88 €, personnel 327 592,71 €, movements 163 891,17 €,
+travel 6 224,00 €, and PP 3's declared total × 1,07 (indirect costs) gives the
+330 754,66 € the funder's analysis states.
 
-Everything else reconciles to the cent: approved 789 615,87 €, declared executed
-497 707,88 €, personnel 327 592,71 €, movements 163 891,17 €.
+The exception is worth knowing about. The Quadro's per-line personnel split and
+the activity each movement actually carries **do not agree**, though their totals
+match exactly (327 592,71 €). Per activity the two differ by up to 18 000 €, and
+this is visible for activities 1 and 4 even though those have a single approved
+line each, so it is not an artefact of the annual-tranche ambiguity. Both figures
+come from the same portal for the same request. The platform holds the row-level
+version (each movement on its own activity), which is the one that can be traced
+to a person and a month; the Quadro's split cannot be reproduced from any data we
+have. Worth resolving with the funder before the next submission.
 
 Imported from `Smartex_Gestao_Projetos_V4.xlsx`:
 

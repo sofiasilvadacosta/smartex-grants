@@ -11,6 +11,8 @@ import { importFteProjects } from "./fte-projects";
 import { importQuadroInvestimentos } from "./pp-quadro";
 import { importPessoalFromPp } from "./pp-pessoal";
 import { importMovimentos } from "./pp-movimentos";
+import { importDeslocacoes } from "./pp-deslocacoes";
+import { importDecisoes } from "./pp-decisoes";
 import { syncPaymentRequestsFromExecution } from "./lib/sync-payment-requests";
 
 const IMPORTS_DIR = path.resolve(__dirname, "../../imports");
@@ -165,24 +167,62 @@ async function main() {
     console.log("\nDEFECT_FREE movimentos:", JSON.stringify(movimentosSummary, null, 2));
   }
 
+  const deslocacoesSummary = await importDeslocacoes(
+    path.join(IMPORTS_DIR, "DefectFree_Deslocacoes.csv"),
+    projectIds.DEFECT_FREE,
+  );
+  if (deslocacoesSummary) {
+    console.log("\nDEFECT_FREE deslocações:", JSON.stringify(deslocacoesSummary, null, 2));
+  }
+
   const pessoalSummary = await importPessoalFromPp(
     path.join(IMPORTS_DIR, "DefectFree_Pessoal.csv"),
+    path.join(IMPORTS_DIR, "DefectFree_Pessoal_Atividades.txt"),
     projectIds.DEFECT_FREE,
   );
   if (pessoalSummary) {
     console.log("\nDEFECT_FREE pessoal:", JSON.stringify(pessoalSummary, null, 2));
-    console.warn(
-      `\n⚠ As ${pessoalSummary.processed} linhas de pessoal do Defect Free ficam por reconciliar:\n` +
-        `  o formulário do portal não indica a atividade nem o Nº de ordem de cada linha, e\n` +
-        `  inferi-la pela descrição não reconcilia com os totais por atividade do quadro\n` +
-        `  aprovado. Atribuir a rubrica no ecrã de reconciliação.`,
-    );
+    if (pessoalSummary.withActivity === 0) {
+      console.warn(
+        `\n⚠ As ${pessoalSummary.processed} linhas de pessoal do Defect Free ficam por reconciliar:\n` +
+          `  sem DefectFree_Pessoal_Atividades.txt não se sabe a atividade de cada movimento, e\n` +
+          `  inferi-la pela descrição não reconcilia com os totais por atividade do quadro\n` +
+          `  aprovado. Ver scripts/import/README.md.`,
+      );
+    } else if (pessoalSummary.ambiguousWithinActivity > 0) {
+      console.warn(
+        `\n⚠ ${pessoalSummary.ambiguousWithinActivity} linhas de pessoal do Defect Free ficam ` +
+          `ambíguas:\n  a atividade é conhecida, mas o financiador dividiu-a em várias rubricas ` +
+          `anuais e o\n  formulário não diz a qual pertence cada movimento. Escolher no ecrã de ` +
+          `reconciliação.`,
+      );
+    }
   }
 
   // Runs after every execution import: the payment requests and the amount each
   // one submitted are derived from the rows that declare them, never assumed.
   const ppSync = await syncPaymentRequestsFromExecution(projectIds.DEFECT_FREE);
   console.log("\nDEFECT_FREE pedidos de pagamento:", JSON.stringify(ppSync, null, 2));
+
+  // From "Fundamentação da análise 12270_3_3" (see imports/DefectFree_Decisao_PP3.pdf).
+  const decisoes = await importDecisoes(IMPORTS_DIR, projectIds.DEFECT_FREE, [
+    {
+      ppNumber: "3",
+      decisionDate: "2026-02-11",
+      status: "PARCIAL",
+      approvedAmount: 287621.14,
+      notes:
+        "Despesa elegível apresentada 330 754,66 € (inclui 7% de custos indiretos); validada " +
+        "287 621,14 €, incentivo 222 063,08 €. Reduções: ETI de setembro/2025 na atividade 1 " +
+        "(-6 642,59 €, atividade concluída em agosto), janeiro/2025 na atividade 3 " +
+        "(-2 814,59 €, início em fevereiro) e julho/2025 na atividade 4 (-9 079,28 €, início " +
+        "em agosto); IDs de investimento 4, 8, 15, 16, 17, 18 e 21 limitados ao valor aprovado " +
+        "em candidatura (-24 596,89 €). Já pago 58 970,29 € de adiantamento, pelo que o " +
+        "remanescente proposto é 163 092,79 €.",
+      documentFile: "DefectFree_Decisao_PP3.pdf",
+    },
+  ]);
+  console.log("\nDEFECT_FREE decisões:", JSON.stringify(decisoes, null, 2));
 
   console.log(
     `\nNão importados (excluídos por decisão): ${PENDING_RECONCILIATION_PROJECTS.join(", ")}`,

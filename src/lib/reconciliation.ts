@@ -46,6 +46,10 @@ export interface MatchCandidate {
   budgetLineId: string;
   category: string;
   trlPhase: string;
+  // The funder's "Nº ordem", "" when the project's budget isn't numbered.
+  // Several lines of a project can share a category and year, so this is often
+  // the only thing that tells two candidates apart on screen.
+  orderNumber: string;
   remainingMargin: number;
   score: number;
   breakdown: { categoryScore: number; marginScore: number; orderBonus: number };
@@ -55,6 +59,7 @@ interface CandidateRow {
   id: string;
   category: string;
   trlPhase: string;
+  orderNumber: string;
   eligibleCost: string;
   executedAmount: string;
   sim: number;
@@ -75,7 +80,14 @@ export async function findBudgetLineCandidates(params: {
   if (orderNumber && /^\d+$/.test(orderNumber)) {
     const exact = await prisma.budgetLine.findFirst({
       where: { projectId, orderNumber },
-      select: { id: true, category: true, trlPhase: true, eligibleCost: true, executedAmount: true },
+      select: {
+        id: true,
+        category: true,
+        trlPhase: true,
+        orderNumber: true,
+        eligibleCost: true,
+        executedAmount: true,
+      },
     });
     if (exact) {
       return [
@@ -83,6 +95,7 @@ export async function findBudgetLineCandidates(params: {
           budgetLineId: exact.id,
           category: exact.category,
           trlPhase: exact.trlPhase,
+          orderNumber: exact.orderNumber,
           remainingMargin: Number(exact.eligibleCost) - Number(exact.executedAmount),
           score: 100,
           breakdown: { categoryScore: 100, marginScore: 100, orderBonus: 100 },
@@ -99,7 +112,7 @@ export async function findBudgetLineCandidates(params: {
   const searchText = rawCategory || parsed.category || "";
 
   const rows = await prisma.$queryRaw<CandidateRow[]>`
-    SELECT id, category, "trlPhase", "eligibleCost"::text, "executedAmount"::text,
+    SELECT id, category, "trlPhase", "orderNumber", "eligibleCost"::text, "executedAmount"::text,
            similarity(category, ${searchText}) as sim
     FROM "BudgetLine"
     WHERE "projectId" = ${projectId}
@@ -128,6 +141,7 @@ export async function findBudgetLineCandidates(params: {
       budgetLineId: row.id,
       category: row.category,
       trlPhase: row.trlPhase,
+      orderNumber: row.orderNumber,
       remainingMargin,
       score: Math.round(score * 100) / 100,
       breakdown: { categoryScore, marginScore, orderBonus },

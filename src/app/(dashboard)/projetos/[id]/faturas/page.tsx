@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
-import { eur } from "@/lib/format";
+import { budgetLineLabel, eur } from "@/lib/format";
 import type { MatchStatus } from "@/generated/prisma/client";
 import type { MatchCandidate } from "@/lib/reconciliation";
 import { resolveInvoiceMatch, markInvoiceNoMatch } from "./actions";
@@ -33,7 +33,7 @@ export default async function InvoicesPage({
     prisma.invoice.findMany({
       where: { projectId, ...(activeStatus ? { matchStatus: activeStatus } : {}) },
       orderBy: { docDate: "desc" },
-      include: { budgetLine: { select: { category: true, trlPhase: true } } },
+      include: { budgetLine: { select: { category: true, trlPhase: true, orderNumber: true } } },
     }),
     prisma.budgetLine.findMany({ where: { projectId }, orderBy: { category: "asc" } }),
   ]);
@@ -92,7 +92,7 @@ export default async function InvoicesPage({
 
               {invoice.budgetLine && (
                 <p className="mt-2 text-sm text-gray-500">
-                  Rubrica: <span className="text-gray-900">{invoice.budgetLine.category}</span>
+                  Rubrica: <span className="text-gray-900">{budgetLineLabel(invoice.budgetLine)}</span>
                 </p>
               )}
 
@@ -110,7 +110,7 @@ export default async function InvoicesPage({
                             type="submit"
                             className="rounded-md border border-gray-300 px-2 py-1 text-left hover:bg-gray-50"
                           >
-                            {c.category} {c.trlPhase && <span className="text-gray-400">({c.trlPhase})</span>}
+                            {budgetLineLabel(c)}
                           </button>
                           <span className="text-gray-400">
                             score {c.score.toFixed(0)} · margem {eur(c.remainingMargin)}
@@ -127,7 +127,7 @@ export default async function InvoicesPage({
                         <option value="">Escolher rubrica manualmente…</option>
                         {budgetLines.map((b) => (
                           <option key={b.id} value={b.id}>
-                            {b.category} {b.trlPhase ? `(${b.trlPhase})` : ""}
+                            {budgetLineLabel(b)}
                           </option>
                         ))}
                       </select>

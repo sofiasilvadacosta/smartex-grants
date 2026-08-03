@@ -10,7 +10,9 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
   const project = await prisma.project.findUnique({
     where: { id },
     include: {
-      budgetLines: { orderBy: [{ activity: "asc" }, { category: "asc" }] },
+      budgetLines: {
+        orderBy: [{ activity: "asc" }, { orderNumber: "asc" }, { category: "asc" }],
+      },
       _count: { select: { invoices: true, allocations: true, paymentRequests: true } },
     },
   });
@@ -32,7 +34,11 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
   // Only projects whose payment-request document has been imported have an
   // official figure to compare against.
   const hasDeclared = project.budgetLines.some((b) => b.declaredExecuted !== null);
-  const columnCount = 7 + (isFteBased ? 1 : 0) + (hasDeclared ? 1 : 0);
+  // The funder's line number, where the budget is numbered at all. It is how
+  // these rubricas are referred to in the payment request, so it leads.
+  const hasOrderNumbers = project.budgetLines.some((b) => b.orderNumber !== "");
+  const columnCount =
+    7 + (isFteBased ? 1 : 0) + (hasDeclared ? 1 : 0) + (hasOrderNumbers ? 1 : 0);
   const divergenceTotal = divergences.reduce((s, d) => s + d.difference, 0);
 
   return (
@@ -132,7 +138,10 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50">
             <tr>
-              {isFteBased && (
+              {hasOrderNumbers && (
+                <th className="px-4 py-2 text-left font-medium text-gray-500">Nº ordem</th>
+              )}
+              {(isFteBased || hasOrderNumbers) && (
                 <th className="px-4 py-2 text-left font-medium text-gray-500">Atividade</th>
               )}
               <th className="px-4 py-2 text-left font-medium text-gray-500">
@@ -160,7 +169,10 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
               const remaining = eligibleCost - executedAmount;
               return (
                 <tr key={line.id} className="hover:bg-gray-50">
-                  {isFteBased && (
+                  {hasOrderNumbers && (
+                    <td className="px-4 py-2 font-medium text-gray-900">{line.orderNumber || "—"}</td>
+                  )}
+                  {(isFteBased || hasOrderNumbers) && (
                     <td className="px-4 py-2 text-gray-500">{line.activity || "—"}</td>
                   )}
                   <td className="px-4 py-2 text-gray-900">{line.category}</td>

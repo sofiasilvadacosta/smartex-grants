@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
 import type { MatchStatus } from "@/generated/prisma/client";
 import type { MatchCandidate } from "@/lib/reconciliation";
-import { eur, monthLabel } from "@/lib/format";
+import { budgetLineLabel, eur, monthLabel } from "@/lib/format";
 import {
   resolveAllocationMatch,
   markAllocationNoMatch,
@@ -41,7 +41,7 @@ export default async function RhPage({
       orderBy: [{ matchStatus: "asc" }, { yearMonth: "desc" }],
       include: {
         person: { select: { name: true } },
-        budgetLine: { select: { category: true, activity: true } },
+        budgetLine: { select: { category: true, activity: true, trlPhase: true, orderNumber: true } },
       },
       take: 100,
     }),
@@ -249,10 +249,21 @@ export default async function RhPage({
                     )}
                   </p>
                   <p className="text-sm text-gray-500">
-                    {row.category} · {monthLabel(row.yearMonth)} ·{" "}
-                    {row.fte !== null
-                      ? `${Number(row.fte).toFixed(2)} FTE`
-                      : `${(Number(row.allocationPercent) * 100).toFixed(0)}% imputação`}
+                    {[
+                      row.category,
+                      monthLabel(row.yearMonth),
+                      // Rows imported from a payment-request form carry neither
+                      // an FTE nor an imputation percentage — showing "0%" there
+                      // reads as "nothing imputed". Their source reference (the
+                      // funder's activity and technician) is the useful context.
+                      row.fte !== null
+                        ? `${Number(row.fte).toFixed(2)} FTE`
+                        : Number(row.allocationPercent) > 0
+                          ? `${(Number(row.allocationPercent) * 100).toFixed(0)}% imputação`
+                          : row.rawSourceRef,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
                   </p>
                 </div>
                 <div className="text-right">
@@ -266,8 +277,8 @@ export default async function RhPage({
                   <p className="text-sm text-gray-500">
                     Rubrica:{" "}
                     <span className="text-gray-900">
-                      {row.budgetLine.activity ? `${row.budgetLine.activity} · ` : ""}
-                      {row.budgetLine.category}
+                      {row.budgetLine.activity ? `Atividade ${row.budgetLine.activity} · ` : ""}
+                      {budgetLineLabel(row.budgetLine)}
                     </span>
                   </p>
                 ) : (
@@ -301,7 +312,7 @@ export default async function RhPage({
                             type="submit"
                             className="rounded-md border border-gray-300 px-2 py-1 text-left hover:bg-gray-50"
                           >
-                            {c.category} {c.trlPhase && <span className="text-gray-400">({c.trlPhase})</span>}
+                            {budgetLineLabel(c)}
                           </button>
                           <span className="text-gray-400">
                             score {c.score.toFixed(0)} · margem {eur(c.remainingMargin)}
@@ -318,7 +329,7 @@ export default async function RhPage({
                         <option value="">Escolher rubrica manualmente…</option>
                         {budgetLines.map((b) => (
                           <option key={b.id} value={b.id}>
-                            {b.category} {b.trlPhase ? `(${b.trlPhase})` : ""}
+                            {budgetLineLabel(b)}
                           </option>
                         ))}
                       </select>
