@@ -3,13 +3,18 @@
 Plataforma de gestão dos projetos financiados da Smartex: orçamento por
 rubrica, faturas/investimentos com reconciliação orçamental, e (em fases
 seguintes) pedidos de pagamento, recebimentos, projeções e deliverables. Ver
-`/root/.claude/plans/refactored-giggling-kettle.md` para a arquitetura
-completa e o plano faseado.
+[`DEPLOY.md`](DEPLOY.md) para pôr a plataforma no ar e
+[`scripts/import/README.md`](scripts/import/README.md) para os dados.
 
 ## Stack
 
 Next.js (App Router) + TypeScript, Postgres via Prisma, Auth.js (Google OAuth
-restrito a `@smartex.ai`), deploy alvo: Vercel.
+restrito a `@smartex.ai`), Vercel.
+
+## Pôr no ar
+
+Ver [`DEPLOY.md`](DEPLOY.md) — base de dados, credenciais Google, variáveis de
+ambiente e como carregar os dados a partir da tua máquina.
 
 ## Desenvolvimento local
 

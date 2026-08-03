@@ -2,11 +2,16 @@
   "name": "smartex-grants",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "postinstall": "prisma generate",
+    "db:deploy": "prisma migrate deploy",
     "db:import": "tsx --env-file=.env scripts/import/index.ts"
   },
   "dependencies": {
