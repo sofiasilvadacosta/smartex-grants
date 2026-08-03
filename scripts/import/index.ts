@@ -265,6 +265,35 @@ async function main() {
     console.log(`${code} pedidos de pagamento:`, JSON.stringify(sync));
   }
 
+  // From "DECISÃO DE CERTIFICAÇÃO DE DESPESA/PAGAMENTO/ENCERRAMENTO", PRR
+  // projeto 61 / formalização 21 (imports/TexPact_Decisao_PP11.pdf). It rules
+  // on the whole Agenda Texp@ct consortium; only Smartex's own section is
+  // recorded here.
+  const texpactDecisoes = await importDecisoes(IMPORTS_DIR, projectIds.TEXPACT, [
+    {
+      ppNumber: "11",
+      decisionDate: "2026-08-02",
+      // Favourable overall, but two of Smartex's items were not validated.
+      status: "PARCIAL",
+      requestedAmount: 166607.26,
+      approvedAmount: 185245.91,
+      notes:
+        "11º Pedido de Reembolso Intercalar da Agenda 61 - Texp@ct, submetido pelo líder do " +
+        "consórcio em 2026-05-15 (despesas até março de 2026). A Smartex reportou 166 607,26 € " +
+        "— Pessoal 87 568,62 €, investigação contratual 40 371,93 €, instrumentos e equipamento " +
+        "37 408,71 €, matérias-primas 1 188,00 €, promoção e divulgação 70,00 €. Despesa apurada " +
+        "185 245,91 € (inclui custos indiretos do Aviso 02/C05-i01/2022). Não validados: " +
+        "comprovante 129 (cartões de visita, sem enquadramento no nº de ordem 590) e comprovante " +
+        "115 (descrição não permite concluir sobre o enquadramento). O financiador assinala que " +
+        "os instrumentos e equipamento excedem o aprovado na rubrica: foram validados por caberem " +
+        "no total da tipologia IDT, mas pedidos futuros podem ser limitados. Exige ainda " +
+        "fundamentação por comprovante da utilização dos equipamentos do nº de ordem 221. " +
+        "Consórcio: elegível 3 201 276,98 €, incentivo 2 409 314,75 €, pagamento 762 645,51 €.",
+      documentFile: "TexPact_Decisao_PP11.pdf",
+    },
+  ]);
+  console.log("\nTEXPACT decisões:", JSON.stringify(texpactDecisoes, null, 2));
+
   const texpactPedidos = await importTexpactPedidos(
     path.join(IMPORTS_DIR, "TexPact_Pedidos_Pagamento.xlsx"),
     projectIds.TEXPACT,

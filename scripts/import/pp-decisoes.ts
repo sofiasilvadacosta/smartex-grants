@@ -13,8 +13,14 @@ export interface DecisionInput {
   ppNumber: string;
   decisionDate: string;
   status: "APROVADO" | "PARCIAL" | "REJEITADO" | "PENDING";
-  // Eligible expense the funder validated, before the incentive rate.
+  // Eligible expense the funder validated. It can exceed what was submitted,
+  // because the funder's figure includes the indirect costs the submission
+  // itself does not carry.
   approvedAmount: number;
+  // What the request submitted. Only needed when the request is not already in
+  // the database — a decision document is often the first record of a request
+  // that no working spreadsheet covers.
+  requestedAmount?: number;
   notes: string;
   // Relative to the imports directory; skipped when absent.
   documentFile?: string;
@@ -24,7 +30,10 @@ export interface DecisionImportSummary {
   created: number;
   updated: number;
   attached: string[];
-  // Requests named by a decision that do not exist for this project.
+  // Requests the decision document itself brought into existence.
+  requestsCreated: string[];
+  // Requests named by a decision that do not exist and carry no submitted
+  // amount either, so there is nothing to create them from.
   unknownPaymentRequests: string[];
 }
 
@@ -37,17 +46,35 @@ export async function importDecisoes(
     created: 0,
     updated: 0,
     attached: [],
+    requestsCreated: [],
     unknownPaymentRequests: [],
   };
 
   for (const decision of decisions) {
-    const request = await prisma.paymentRequest.findUnique({
+    let request = await prisma.paymentRequest.findUnique({
       where: { projectId_ppNumber: { projectId, ppNumber: decision.ppNumber } },
       select: { id: true },
     });
     if (!request) {
-      summary.unknownPaymentRequests.push(decision.ppNumber);
-      continue;
+      if (decision.requestedAmount === undefined) {
+        summary.unknownPaymentRequests.push(decision.ppNumber);
+        continue;
+      }
+      request = await prisma.paymentRequest.create({
+        data: {
+          projectId,
+          ppNumber: decision.ppNumber,
+          requestedAmount: decision.requestedAmount,
+          notes: "Criado a partir do documento de decisão; sem folha de execução associada.",
+        },
+        select: { id: true },
+      });
+      summary.requestsCreated.push(decision.ppNumber);
+    } else if (decision.requestedAmount !== undefined) {
+      await prisma.paymentRequest.update({
+        where: { id: request.id },
+        data: { requestedAmount: decision.requestedAmount },
+      });
     }
 
     const data = {

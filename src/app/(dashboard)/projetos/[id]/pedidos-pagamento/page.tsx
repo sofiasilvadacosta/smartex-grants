@@ -19,12 +19,20 @@ export default async function PaymentRequestsPage({ params }: { params: Promise<
 
   const requests = await prisma.paymentRequest.findMany({
     where: { projectId },
-    orderBy: [{ submissionDate: "desc" }, { ppNumber: "asc" }],
     include: {
       decisions: { orderBy: { createdAt: "desc" } },
       attachments: { orderBy: { uploadedAt: "desc" } },
       _count: { select: { invoices: true, allocations: true } },
     },
+  });
+
+  // "PP 11" must not sort between "PP 1" and "PP 3": the funder's number is a
+  // number, even though it is stored as text because some projects letter them.
+  requests.sort((a, b) => {
+    const numA = Number(a.ppNumber);
+    const numB = Number(b.ppNumber);
+    if (Number.isFinite(numA) && Number.isFinite(numB) && numA !== numB) return numA - numB;
+    return a.ppNumber.localeCompare(b.ppNumber, "pt");
   });
 
   // The "linked total" that a PP actually bundles, computed from execution rows

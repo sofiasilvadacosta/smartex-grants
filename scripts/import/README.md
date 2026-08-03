@@ -59,9 +59,9 @@ Imported from `Grants_Approved_Execution_v3.xlsx`:
   TexP@ct (clean `_Approved` / `_Investments` / `_RH` sheet trios). The RH
   totals reconcile to the cent against the source `_Approved` sheet's
   "Executado" column, which is the main correctness check for this import.
-- **Invoices only** (no `_Approved`-equivalent sheet identified with
-  confidence): Internacionalização, Defect Free — enter their budget lines
-  manually via the UI for now.
+- **Invoices only in the workbook**: Internacionalização, Defect Free. Their
+  approved budget is not in any sheet — it comes from the funder's own form,
+  see "Approved budget from a payment-request PDF" below.
 - **Texia and TexQualis** (`fte-projects.ts`): budgeted per Atividade × Perfil
   with a fixed eligible cost per FTE (5189 € and 4432 €) instead of real
   salaries, so `Project.fteRate` is set and execution is entered in the app as
@@ -74,10 +74,11 @@ Imported from `Grants_Approved_Execution_v3.xlsx`:
     zero; they are imported at the yearly value and listed in the run output,
     since they may be cancelled work.
 
-  Texia's "1 PP Elegível" is recorded per activity (not per profile), so the
-  import creates payment request nº 1 with the submitted total (262 021,15 €)
-  and leaves the per-line split to be entered in the app. TexQualis has no
-  execution in the sheet yet.
+  Neither sheet records execution. Both projects' execution comes from the
+  funder's form instead — see "Texia and TexQualis execution" below. The
+  "1 PP Elegível" column is not used to create a payment request: it gives the
+  submitted total but names no request, and the portal shows that money was
+  declared in request 3.
 - **Out of scope**: RHAQ (excluded by decision).
 
 ### Reading the `_Approved` sheets
@@ -207,10 +208,24 @@ both carry data the spreadsheet doesn't:
 ### Funder decisions
 
 `pp-decisoes.ts` records a decision on a payment request together with the
-analysis document itself (`imports/DefectFree_Decisao_PP3.pdf`, stored as an
-attachment). The figures are typed into `scripts/import/index.ts` rather than
-parsed: these are prose documents with no fixed layout, a few per year, and a
-number read from a mis-parsed sentence would be worse than one nobody typed.
+document itself, stored as an attachment. The figures are typed into
+`scripts/import/index.ts` rather than parsed: these are prose documents with no
+fixed layout, a few per year, and a number read from a mis-parsed sentence would
+be worse than one nobody typed. Two are recorded:
+
+- `imports/DefectFree_Decisao_PP3.pdf` — request 3, 287 621,14 € validated of
+  330 754,66 € declared.
+- `imports/TexPact_Decisao_PP11.pdf` — request 11. This one rules on the whole
+  Agenda 61 consortium (24 of 39 members), so only Smartex's own section is
+  recorded: 166 607,26 € reported, 185 245,91 € apurada. The apurada figure
+  exceeds what was reported because it includes the indirect costs the
+  submission does not carry — the same relationship the TexP@ct workbook's
+  "Despesas Apuradas" column has, so the two are consistent.
+
+A decision can create its own request. TexP@ct's request 11 exists in no working
+spreadsheet — the workbook stops at 9 — and the decision document is the only
+record of it, so `requestedAmount` on the decision input creates the request
+rather than the import reporting an unknown one and dropping the decision.
 
 ### Texia and TexQualis execution
 
