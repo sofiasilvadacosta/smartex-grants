@@ -45,7 +45,13 @@ async function upsertBudgetLine(
   const existing = await prisma.budgetLine.findUnique({
     // Invoice-based projects have no per-activity budget split, so activity is "".
     where: {
-      projectId_activity_category_trlPhase: { projectId, activity: "", category, trlPhase },
+      projectId_activity_category_trlPhase_orderNumber: {
+        projectId,
+        activity: "",
+        category,
+        trlPhase,
+        orderNumber: "",
+      },
     },
   });
 

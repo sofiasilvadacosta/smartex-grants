@@ -165,11 +165,12 @@ export async function importFteProjects(
 
       const existing = await prisma.budgetLine.findUnique({
         where: {
-          projectId_activity_category_trlPhase: {
+          projectId_activity_category_trlPhase_orderNumber: {
             projectId,
             activity,
             category: profile,
             trlPhase: "",
+            orderNumber: "",
           },
         },
       });

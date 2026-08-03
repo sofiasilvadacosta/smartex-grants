@@ -80,6 +80,34 @@ Imported from `Grants_Approved_Execution_v3.xlsx`:
   execution in the sheet yet.
 - **Out of scope**: RHAQ (excluded by decision).
 
+## Approved budget from a payment-request PDF (Defect Free)
+
+Defect Free has no `_Approved` sheet — its approved budget only exists in the
+funder's payment-request form ("Quadro de Investimentos", SGO 2030 / Norte
+2030). Convert that PDF to CSV once, then the normal import reads it:
+
+```bash
+pip install pdfplumber
+python3 scripts/import/extract-pp-pdf.py \
+  Pedido_de_Pagamento_Defect_Free.pdf \
+  imports/DefectFree_Quadro_Investimentos.csv
+```
+
+The extractor cross-checks its row sums against the document's own Total row
+and refuses to write the CSV if they disagree, so a mis-parse can't quietly
+become budget data. It produces one row per **Nº ordem** — the unit the funder
+approves and reports against — with the activity, official cost classification
+(a/c/e/f/h/i), year, approved amount and the amounts declared as executed.
+
+`pp-quadro.ts` then creates one budget line per Nº ordem, registers the payment
+request with the declared totals, and links invoices to their budget line
+**exactly by Nº ordem** (no text matching), since the PP sheets carry the same
+number. Budget lines whose Nº ordem is no longer in the CSV are reported rather
+than deleted — they may already carry execution or have been added by hand.
+
+Note: the PDF does not state its own request number; the importer is configured
+with `"2"` because that is what the project's invoices carry in "Nº PP".
+
 Imported from `Smartex_Gestao_Projetos_V4.xlsx`:
 
 - **People** (`DADOS`): 80 people with salary, profile and entry/exit dates.

@@ -20,16 +20,26 @@ export interface ParsedSourceRef {
   category?: string;
 }
 
-// The source "Nº ordem (mapa investim)" field is a " / "-joined compound key,
-// e.g. "304 / IDT / Investigação industrial e Estudos de viabilidade (TRL 3-4) / Custos com matérias primas e materiais".
+// Two source formats carry the funder's line reference:
+//   "304 / IDT / Investigação industrial (TRL 3-4) / Custos com matérias primas"
+//     — the "/"-joined compound key used by the Produtech/TexP@ct sheets
+//   "11 - Créditos AWS"
+//     — the "Nº ordem - Designação" pair used by the newer PP sheets
+// Both start with the order number, which is the part that matters most.
 export function parseSourceRef(raw: string | null | undefined): ParsedSourceRef {
   if (!raw) return {};
+  const leadingNumber = /^\s*(\d+)\s*[-/]/.exec(raw)?.[1];
+
   const parts = raw
     .split("/")
     .map((s) => s.trim())
     .filter(Boolean);
-  const [orderNumber, fundingType, trlPhase, category] = parts;
-  return { orderNumber, fundingType, trlPhase, category };
+  // Only a "/"-joined string carries the funding-type / TRL / category parts.
+  if (parts.length > 1) {
+    const [orderNumber, fundingType, trlPhase, category] = parts;
+    return { orderNumber: leadingNumber ?? orderNumber, fundingType, trlPhase, category };
+  }
+  return { orderNumber: leadingNumber };
 }
 
 export interface MatchCandidate {
@@ -58,6 +68,28 @@ export async function findBudgetLineCandidates(params: {
 }): Promise<MatchCandidate[]> {
   const { projectId, rawCategory, rawSourceRef, amount } = params;
   const parsed = parseSourceRef(rawSourceRef);
+
+  // When both sides carry the funder's "Nº ordem" the link is known exactly,
+  // so skip the scoring entirely — text similarity can only make it worse.
+  const orderNumber = parsed.orderNumber;
+  if (orderNumber && /^\d+$/.test(orderNumber)) {
+    const exact = await prisma.budgetLine.findFirst({
+      where: { projectId, orderNumber },
+      select: { id: true, category: true, trlPhase: true, eligibleCost: true, executedAmount: true },
+    });
+    if (exact) {
+      return [
+        {
+          budgetLineId: exact.id,
+          category: exact.category,
+          trlPhase: exact.trlPhase,
+          remainingMargin: Number(exact.eligibleCost) - Number(exact.executedAmount),
+          score: 100,
+          breakdown: { categoryScore: 100, marginScore: 100, orderBonus: 100 },
+        },
+      ];
+    }
+  }
   // rawCategory (the invoice's own "Tipo" field) uses the same short rubrica
   // vocabulary as BudgetLine.category. The parsed source-ref's trailing
   // segment is a longer free-text description from a *different* column in

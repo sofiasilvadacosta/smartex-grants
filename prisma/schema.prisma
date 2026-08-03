@@ -129,6 +129,13 @@ model BudgetLine {
   // there for exactly that reason).
   trlPhase        String   @default("")
   activity        String   @default("")
+  // The funder's own line number in the approved "Quadro de Investimentos"
+  // ("Nº ordem"), "" when the project's budget isn't numbered that way. Where
+  // invoices carry it too, it links them to their rubrica exactly, with no
+  // text matching involved. Part of the unique key because a funder can
+  // approve several numbered lines with the same activity, classification and
+  // year — without it those rows overwrite each other and budget is lost.
+  orderNumber     String   @default("")
   // The funder's own job-title for this profile ("Perfil no Balcão"), needed
   // when reporting back to them. Null for invoice-based projects.
   externalProfile String?
@@ -153,7 +160,8 @@ model BudgetLine {
   createdBy   User?    @relation("BudgetLineCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   updatedBy   User?    @relation("BudgetLineUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
 
-  @@unique([projectId, activity, category, trlPhase])
+  @@unique([projectId, activity, category, trlPhase, orderNumber])
+  @@index([projectId, orderNumber])
 }
 
 enum ChangeType {

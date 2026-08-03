@@ -8,6 +8,7 @@ import { importFamilyB, PENDING_RECONCILIATION_PROJECTS } from "./family-b";
 import { importPeopleAndCapacity } from "./people";
 import { importRhSheets } from "./rh";
 import { importFteProjects } from "./fte-projects";
+import { importQuadroInvestimentos } from "./pp-quadro";
 
 const IMPORTS_DIR = path.resolve(__dirname, "../../imports");
 const GRANTS_WORKBOOK = path.join(IMPORTS_DIR, "Grants_Approved_Execution_v3.xlsx");
@@ -137,6 +138,22 @@ async function main() {
           s.fteTotalMismatches.map((m) => `    - ${m}`).join("\n"),
       );
     }
+  }
+
+  console.log("\nImporting Quadro de Investimentos from payment-request PDFs...");
+  const quadroSummary = await importQuadroInvestimentos(
+    path.join(IMPORTS_DIR, "DefectFree_Quadro_Investimentos.csv"),
+    projectIds.DEFECT_FREE,
+    // The PDF does not state its own request number; "2" is what the project's
+    // invoices carry in "Nº PP". Confirm before relying on it for reporting.
+    "2",
+  );
+  if (quadroSummary) {
+    console.log("DEFECT_FREE:", JSON.stringify(quadroSummary, null, 2));
+  } else {
+    console.log(
+      "  (sem DefectFree_Quadro_Investimentos.csv em imports/ — ver scripts/import/README.md)",
+    );
   }
 
   console.log(
