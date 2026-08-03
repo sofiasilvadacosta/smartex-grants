@@ -1,0 +1,256 @@
+// Smartex Grants — Phase 1 schema (auth, projects, budget lines, invoices, import tracking).
+// See /root/.claude/plans/refactored-giggling-kettle.md for the full architecture and later phases.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------- Auth (Auth.js / NextAuth PrismaAdapter models) ----------
+
+enum Role {
+  ADMIN
+  EDITOR
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  role          Role      @default(EDITOR)
+  disabledAt    DateTime?
+  createdAt     DateTime  @default(now())
+
+  accounts Account[]
+  sessions Session[]
+
+  createdProjects        Project[]         @relation("ProjectCreatedBy")
+  updatedProjects        Project[]         @relation("ProjectUpdatedBy")
+  createdBudgetLines     BudgetLine[]      @relation("BudgetLineCreatedBy")
+  updatedBudgetLines     BudgetLine[]      @relation("BudgetLineUpdatedBy")
+  budgetChangeLogEntries BudgetChangeLog[] @relation("BudgetChangeLogChangedBy")
+  createdInvoices        Invoice[]         @relation("InvoiceCreatedBy")
+  updatedInvoices        Invoice[]         @relation("InvoiceUpdatedBy")
+  reconciledInvoices     Invoice[]         @relation("InvoiceReconciledBy")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ---------- Projects & budget ----------
+
+enum ProjectStatus {
+  ACTIVE
+  CLOSED
+}
+
+model Project {
+  id             String        @id @default(cuid())
+  code           String        @unique
+  name           String
+  fundingProgram String?
+  startDate      DateTime?
+  endDate        DateTime?
+  status         ProjectStatus @default(ACTIVE)
+
+  budgetLines BudgetLine[]
+  invoices    Invoice[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+  createdBy   User?    @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy   User?    @relation("ProjectUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+}
+
+// A "rubrica orçamental": one approved budget category within a project.
+model BudgetLine {
+  id        String @id @default(cuid())
+  projectId String
+  category  String
+  // "" (not null) when the rubrica has no TRL phase — a nullable column can't
+  // be used reliably inside the @@unique([projectId, category, trlPhase])
+  // below (NULL isn't comparable in SQL, and Prisma's compound-unique input
+  // type rejects null there for exactly that reason).
+  trlPhase        String  @default("")
+  eligibleCost    Decimal @db.Decimal(14, 2)
+  financingAmount Decimal @db.Decimal(14, 2)
+  // Denormalized cache of SUM(Invoice.eligibleAmount) for this line, recomputed
+  // transactionally whenever a linked Invoice's budgetLineId/amount changes.
+  executedAmount  Decimal @default(0) @db.Decimal(14, 2)
+
+  project    Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  invoices   Invoice[]
+  changeLogs BudgetChangeLog[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  updatedById String?
+  createdBy   User?    @relation("BudgetLineCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy   User?    @relation("BudgetLineUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@unique([projectId, category, trlPhase])
+}
+
+enum ChangeType {
+  CREATE
+  UPDATE
+  DELETE
+}
+
+// Explicit audit trail for amendments to the approved investment plan — a
+// first-class business requirement, distinct from the generic updatedAt trail.
+model BudgetChangeLog {
+  id           String     @id @default(cuid())
+  budgetLineId String
+  changeType   ChangeType
+  changedField String?
+  oldValue     String?
+  newValue     String?
+  reason       String?
+  changedAt    DateTime   @default(now())
+  changedById  String?
+
+  budgetLine BudgetLine @relation(fields: [budgetLineId], references: [id], onDelete: Cascade)
+  changedBy  User?      @relation("BudgetChangeLogChangedBy", fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([budgetLineId])
+}
+
+// ---------- Execution: invoices ----------
+
+enum MatchStatus {
+  UNMATCHED
+  AMBIGUOUS
+  MATCHED
+  MANUAL_NO_MATCH
+}
+
+enum MatchMethod {
+  SUGGESTED
+  MANUAL
+}
+
+model Invoice {
+  id           String  @id @default(cuid())
+  projectId    String
+  budgetLineId String?
+
+  // Raw invoice fields (from *_Investments / PP sheets)
+  category         String
+  supplierName     String?
+  supplierTaxId    String?
+  country          String?
+  docNumber        String?
+  docDate          DateTime?
+  totalValue       Decimal?  @db.Decimal(14, 2)
+  vatValue         Decimal?  @db.Decimal(14, 2)
+  nonDeductibleVat Decimal?  @db.Decimal(14, 2)
+  eligibleAmount   Decimal   @db.Decimal(14, 2)
+
+  // "Despesa apresentada" value group (newer PP sheets)
+  presentedTotal    Decimal? @db.Decimal(14, 2)
+  presentedVat      Decimal? @db.Decimal(14, 2)
+  presentedEligible Decimal? @db.Decimal(14, 2)
+
+  // "Despesa paga" value group
+  paidTotal    Decimal? @db.Decimal(14, 2)
+  paidEligible Decimal? @db.Decimal(14, 2)
+
+  // "Documento de suporte do pagamento" value group
+  paymentMethod    String?
+  paymentReference String?
+  paymentDate      DateTime?
+  paymentDocValue  Decimal?  @db.Decimal(14, 2)
+
+  ppNumber             String?
+  eligibilityCertified Boolean?
+  obs                  String?
+
+  // Reconciliation of the source "Nº ordem (mapa investim)" -> BudgetLine link
+  rawSourceRef    String?
+  matchStatus     MatchStatus  @default(UNMATCHED)
+  matchConfidence Decimal?     @db.Decimal(5, 2)
+  matchMethod     MatchMethod?
+  matchCandidates Json?
+  reconciledById  String?
+  reconciledAt    DateTime?
+
+  // Import provenance / idempotency
+  sourceSheet String
+  sourceRowId String
+
+  project    Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  budgetLine BudgetLine? @relation(fields: [budgetLineId], references: [id], onDelete: SetNull)
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  createdById  String?
+  updatedById  String?
+  createdBy    User?    @relation("InvoiceCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy    User?    @relation("InvoiceUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  reconciledBy User?    @relation("InvoiceReconciledBy", fields: [reconciledById], references: [id], onDelete: SetNull)
+
+  @@unique([projectId, sourceRowId])
+  @@index([projectId, matchStatus])
+  @@index([budgetLineId])
+}
+
+// ---------- Import tracking ----------
+
+model ImportRun {
+  id             String    @id @default(cuid())
+  sourceFileName String
+  sourceFileHash String
+  sheetName      String
+  rowsProcessed  Int       @default(0)
+  rowsMatched    Int       @default(0)
+  rowsUnmatched  Int       @default(0)
+  rowsAmbiguous  Int       @default(0)
+  errors         Json?
+  startedAt      DateTime  @default(now())
+  finishedAt     DateTime?
+
+  @@index([sourceFileName, sheetName])
+}
