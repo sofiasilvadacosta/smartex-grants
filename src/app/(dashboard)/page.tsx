@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
+import { projectDataQuality } from "@/lib/data-quality";
 import { eur } from "@/lib/format";
 
 export default async function DashboardPage() {
@@ -8,7 +9,8 @@ export default async function DashboardPage() {
     orderBy: { name: "asc" },
   });
 
-  const [invoiceCounts, allocationCounts] = await Promise.all([
+  const [quality, invoiceCounts, allocationCounts] = await Promise.all([
+    projectDataQuality(),
     prisma.invoice.groupBy({
       by: ["projectId"],
       where: { matchStatus: { in: ["UNMATCHED", "AMBIGUOUS"] } },
@@ -56,6 +58,20 @@ export default async function DashboardPage() {
             );
             const pct = eligibleCost > 0 ? Math.round((executed / eligibleCost) * 100) : 0;
             const unmatched = unmatchedByProject.get(project.id) ?? 0;
+            const q = quality.get(project.id);
+            // Only the problems worth acting on, in the order they block work:
+            // no budget to reconcile against, then costs beyond the approved
+            // amount, then a figure that disagrees with the funder's.
+            const warnings = [
+              q?.hasExecution && !q.hasBudget ? "sem rubricas orçamentais" : null,
+              q?.overBudgetLines
+                ? `${q.overBudgetLines} rubrica(s) acima do aprovado (${eur(q.overBudgetAmount)})`
+                : null,
+              q?.divergentLines ? `${q.divergentLines} rubrica(s) divergem do declarado` : null,
+              q?.duplicateInvoices
+                ? `${q.duplicateInvoices} fatura(s) repetidas na origem (${eur(q.duplicateAmount)})`
+                : null,
+            ].filter(Boolean) as string[];
 
             return (
               <Link
@@ -88,6 +104,13 @@ export default async function DashboardPage() {
                     </dd>
                   </div>
                 </dl>
+                {warnings.length > 0 && (
+                  <ul className="mt-3 space-y-1 border-t border-gray-100 pt-3 text-xs text-amber-700">
+                    {warnings.map((w) => (
+                      <li key={w}>⚠ {w}</li>
+                    ))}
+                  </ul>
+                )}
               </Link>
             );
           })}

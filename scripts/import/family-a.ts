@@ -6,6 +6,8 @@ import {
   buildHeaderIndex,
   normalizeHeader,
   cellAt,
+  rowValues,
+  cellText,
   asString,
   asNumber,
   asDate,
@@ -41,6 +43,7 @@ async function upsertBudgetLine(
   trlPhase: string,
   eligibleCost: number,
   financingAmount: number,
+  declaredExecuted: number | null,
 ): Promise<{ wasCreated: boolean }> {
   const existing = await prisma.budgetLine.findUnique({
     // Invoice-based projects have no per-activity budget split, so activity is "".
@@ -57,7 +60,7 @@ async function upsertBudgetLine(
 
   if (!existing) {
     const created = await prisma.budgetLine.create({
-      data: { projectId, category, trlPhase, eligibleCost, financingAmount },
+      data: { projectId, category, trlPhase, eligibleCost, financingAmount, declaredExecuted },
     });
     await prisma.budgetChangeLog.create({
       data: {
@@ -85,24 +88,46 @@ async function upsertBudgetLine(
     });
     await prisma.budgetLine.update({
       where: { id: existing.id },
-      data: { eligibleCost, financingAmount },
+      data: { eligibleCost, financingAmount, declaredExecuted },
     });
+    return { wasCreated: false };
   }
+  await prisma.budgetLine.update({ where: { id: existing.id }, data: { declaredExecuted } });
   return { wasCreated: false };
 }
 
 async function importApprovedSheet(workbook: Awaited<ReturnType<typeof loadWorkbook>>, sheetName: string, projectId: string) {
   const sheet = getSheet(workbook, sheetName);
   const headerRow = findHeaderRow(sheet);
+  // The sheet's own per-rubrica "Executado" tally. Kept as declaredExecuted so
+  // the project page can compare it against the execution actually linked here
+  // — for these two projects the "Nº ordem" is inconsistent, so that comparison
+  // is the only way to see where the automatic matching went wrong.
+  // Produtech repeats the header and only the rightmost column carries values,
+  // so take the last occurrence.
+  const headerCells = rowValues(sheet.getRow(headerRow));
+  let executedCol: number | null = null;
+  headerCells.forEach((value, col) => {
+    if (normalizeHeader(cellText(value)) === "executado") executedCol = col;
+  });
+
   let created = 0;
   let updated = 0;
+  let declaredTotal = 0;
+  let sheetTotal: number | null = null;
 
   for (let r = headerRow + 1; r <= sheet.rowCount; r++) {
     const row = sheet.getRow(r);
     const shortCode = asString(row.getCell(1).value);
     const description = asString(row.getCell(2).value);
     const label = (description ?? "").trim().toUpperCase();
-    if (label === "TOTAL" || label === "FINANCIAMENTO") break; // everything after is summary/unrelated cruft
+    if (label === "TOTAL") {
+      // The sheet's own total for the Executado column, used below to prove the
+      // per-line figures were read from the right column.
+      if (executedCol !== null) sheetTotal = asNumber(row.getCell(executedCol).value);
+      break;
+    }
+    if (label === "FINANCIAMENTO") break; // everything after is summary/unrelated cruft
 
     const category = shortCode ?? description;
     if (!category) continue;
@@ -112,12 +137,28 @@ async function importApprovedSheet(workbook: Awaited<ReturnType<typeof loadWorkb
     const trlMatch = description ? TRL_PATTERN.exec(description) : null;
     const trlPhase = trlMatch ? trlMatch[1] : "";
 
-    const { wasCreated } = await upsertBudgetLine(projectId, category, trlPhase, eligibleCost, financingAmount);
+    const declaredExecuted =
+      executedCol !== null ? asNumber(row.getCell(executedCol).value) : null;
+    if (declaredExecuted !== null) declaredTotal += declaredExecuted;
+
+    const { wasCreated } = await upsertBudgetLine(
+      projectId,
+      category,
+      trlPhase,
+      eligibleCost,
+      financingAmount,
+      declaredExecuted,
+    );
     if (wasCreated) created++;
     else updated++;
   }
 
-  return { created, updated };
+  return {
+    created,
+    updated,
+    declaredTotal: Math.round(declaredTotal * 100) / 100,
+    sheetTotal: sheetTotal === null ? null : Math.round(sheetTotal * 100) / 100,
+  };
 }
 
 async function importInvestmentsSheet(

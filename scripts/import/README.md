@@ -80,6 +80,38 @@ Imported from `Grants_Approved_Execution_v3.xlsx`:
   execution in the sheet yet.
 - **Out of scope**: RHAQ (excluded by decision).
 
+### Reading the `_Approved` sheets
+
+Two things about these sheets are worth knowing, because both cost real money
+when they were wrong:
+
+- The header row has to be *found*, and it is found by counting **label** cells
+  (non-empty, not a number or date), not filled cells. TexP@ct's first data row
+  carries more computed columns than the header has labels, so counting filled
+  cells made that row win — it was treated as the header and skipped, losing the
+  RH 3-4 rubrica and 374 187,06 € of approved budget along with it. The rubrica's
+  226 RH rows then had nowhere to go and sat unreconciled.
+- The sheet's own per-rubrica "Executado" column is loaded into
+  `BudgetLine.declaredExecuted`. Produtech repeats that header and only the
+  rightmost column holds values, so the last occurrence is used; the import sums
+  what it read and compares it against the sheet's TOTAL row, warning loudly on
+  a mismatch. Both currently agree to the cent (Produtech 1 172 464,22 €,
+  TexP@ct 1 057 213,88 €).
+
+### TexP@ct payment requests
+
+`imports/TexPact_Pedidos_Pagamento.xlsx` (`texpact-pedidos.ts`) carries what the
+working spreadsheet does not: a "Resumo" sheet with submitted / cuts / approved
+/ paid per request, and one sheet per request listing the invoices it declared.
+It produces the 6 real requests with their decisions, and sets the Nº PP on 101
+invoices — the working sheet had it on 12 of 131.
+
+An invoice cut from one request and re-submitted in a later one appears in both
+sheets, so the highest request number wins rather than whichever sheet is read
+last. Personnel is declared per request as one aggregate row per TRL phase and
+cannot be split back into the monthly allocations held here, so it is recorded
+in the request's notes instead of linked.
+
 ## Approved budget from a payment-request PDF (Defect Free)
 
 Defect Free has no `_Approved` sheet — its approved budget only exists in the

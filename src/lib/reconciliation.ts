@@ -111,6 +111,42 @@ export async function findBudgetLineCandidates(params: {
   // missing entirely.
   const searchText = rawCategory || parsed.category || "";
 
+  // A "Tipo" that *is* the name of exactly one rubrica is the source stating
+  // the rubrica, not a hint to be weighed. Scoring it against the others lets
+  // remaining margin overrule it: once the right rubrica is full, a
+  // near-identical name that still has room outscores it (e.g. "Subcontratação
+  // 3-4" full, so its invoices land on "Subcontratação 5-9"). Exceeding an
+  // approved rubrica is a real fact the project page already flags in red —
+  // hiding it by filing the cost elsewhere is worse than showing it.
+  const exactByName = await prisma.budgetLine.findMany({
+    where: { projectId, category: { equals: searchText.trim(), mode: "insensitive" } },
+    select: {
+      id: true,
+      category: true,
+      trlPhase: true,
+      orderNumber: true,
+      eligibleCost: true,
+      executedAmount: true,
+    },
+  });
+  // Two rubricas sharing a name (same category, different TRL phase) are
+  // genuinely ambiguous on the name alone — fall through to scoring.
+  if (searchText.trim() && exactByName.length === 1) {
+    const line = exactByName[0];
+    const remainingMargin = Number(line.eligibleCost) - Number(line.executedAmount);
+    return [
+      {
+        budgetLineId: line.id,
+        category: line.category,
+        trlPhase: line.trlPhase,
+        orderNumber: line.orderNumber,
+        remainingMargin,
+        score: 100,
+        breakdown: { categoryScore: 100, marginScore: remainingMargin >= amount ? 100 : 0, orderBonus: 0 },
+      },
+    ];
+  }
+
   const rows = await prisma.$queryRaw<CandidateRow[]>`
     SELECT id, category, "trlPhase", "orderNumber", "eligibleCost"::text, "executedAmount"::text,
            similarity(category, ${searchText}) as sim

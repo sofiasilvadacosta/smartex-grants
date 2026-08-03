@@ -13,6 +13,7 @@ import { importPessoalFromPp } from "./pp-pessoal";
 import { importMovimentos } from "./pp-movimentos";
 import { importDeslocacoes } from "./pp-deslocacoes";
 import { importDecisoes } from "./pp-decisoes";
+import { importTexpactPedidos } from "./texpact-pedidos";
 import { syncPaymentRequestsFromExecution } from "./lib/sync-payment-requests";
 
 const IMPORTS_DIR = path.resolve(__dirname, "../../imports");
@@ -65,6 +66,19 @@ async function main() {
     );
   }
   console.log(JSON.stringify(summaryA, null, 2));
+  for (const [code, data] of Object.entries(summaryA)) {
+    const { budgetLines } = data as {
+      budgetLines: { declaredTotal: number; sheetTotal: number | null };
+    };
+    const { declaredTotal, sheetTotal } = budgetLines;
+    if (sheetTotal !== null && Math.abs(declaredTotal - sheetTotal) > 0.01) {
+      console.warn(
+        `\n⚠ ${code}: a coluna "Executado" lida por rubrica soma ${declaredTotal.toFixed(2)} €,\n` +
+          `  mas a linha TOTAL da folha diz ${sheetTotal.toFixed(2)} €. Foi lida a coluna errada\n` +
+          `  ou há linhas fora do intervalo — o painel de divergências não é fiável até resolver.`,
+      );
+    }
+  }
 
   console.log("\nImporting Family B (Internacionalização, Defect Free)...");
   const startB = new Date();
@@ -223,6 +237,14 @@ async function main() {
     },
   ]);
   console.log("\nDEFECT_FREE decisões:", JSON.stringify(decisoes, null, 2));
+
+  const texpactPedidos = await importTexpactPedidos(
+    path.join(IMPORTS_DIR, "TexPact_Pedidos_Pagamento.xlsx"),
+    projectIds.TEXPACT,
+  );
+  if (texpactPedidos) {
+    console.log("\nTEXPACT pedidos de pagamento:", JSON.stringify(texpactPedidos, null, 2));
+  }
 
   console.log(
     `\nNão importados (excluídos por decisão): ${PENDING_RECONCILIATION_PROJECTS.join(", ")}`,

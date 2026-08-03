@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { declaredVsExecuted } from "@/lib/declared-vs-executed";
-import { eur } from "@/lib/format";
+import { budgetLineLabel, eur } from "@/lib/format";
 import { createBudgetLine, updateBudgetLine } from "../actions";
 
 export default async function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -40,6 +40,14 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
   const columnCount =
     7 + (isFteBased ? 1 : 0) + (hasDeclared ? 1 : 0) + (hasOrderNumbers ? 1 : 0);
   const divergenceTotal = divergences.reduce((s, d) => s + d.difference, 0);
+  // Execution beyond what the funder approved on that line. Shown rather than
+  // absorbed elsewhere: the cost is real and the overrun is the decision the
+  // funder will make, so it has to be visible before the next request.
+  const overBudget = project.budgetLines
+    .map((line) => ({ line, excess: Number(line.executedAmount) - Number(line.eligibleCost) }))
+    .filter((row) => row.excess > 0.01)
+    .sort((a, b) => b.excess - a.excess);
+  const overBudgetTotal = overBudget.reduce((s, r) => s + r.excess, 0);
 
   return (
     <div>
@@ -126,6 +134,39 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
                   <td className="py-1 pr-4 text-right">{eur(d.declared)}</td>
                   <td className="py-1 pr-4 text-right">{eur(d.executed)}</td>
                   <td className="py-1 text-right font-medium">{eur(d.difference)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      {overBudget.length > 0 && (
+        <section className="mt-6 rounded-lg border border-red-200 bg-red-50 p-4">
+          <h2 className="text-sm font-medium text-red-900">Rubricas acima do aprovado</h2>
+          <p className="mt-1 text-xs text-red-800">
+            {overBudget.length} rubrica(s) com execução acima do custo elegível aprovado —
+            excesso total de {eur(overBudgetTotal)}. Precisa de realocação ou de um aditamento.
+          </p>
+          <table className="mt-3 min-w-full text-xs">
+            <thead>
+              <tr className="text-left text-red-900">
+                <th className="py-1 pr-4 font-medium">Rubrica</th>
+                <th className="py-1 pr-4 text-right font-medium">Aprovado</th>
+                <th className="py-1 pr-4 text-right font-medium">Executado</th>
+                <th className="py-1 text-right font-medium">Excesso</th>
+              </tr>
+            </thead>
+            <tbody className="text-red-900">
+              {overBudget.map(({ line, excess }) => (
+                <tr key={line.id}>
+                  <td className="py-1 pr-4">
+                    {line.activity ? `Atividade ${line.activity} · ` : ""}
+                    {budgetLineLabel(line)}
+                  </td>
+                  <td className="py-1 pr-4 text-right">{eur(Number(line.eligibleCost))}</td>
+                  <td className="py-1 pr-4 text-right">{eur(Number(line.executedAmount))}</td>
+                  <td className="py-1 text-right font-medium">{eur(excess)}</td>
                 </tr>
               ))}
             </tbody>

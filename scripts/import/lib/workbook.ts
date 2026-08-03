@@ -24,7 +24,7 @@ export function rowValues(row: ExcelJS.Row): unknown[] {
 // ({text}), formulas ({result}), rich text ({richText:[{text}]}) and errors
 // ({error}). Without unwrapping all of them, String() yields "[object Object]"
 // and that string ends up stored as real data.
-function cellText(value: unknown): string {
+export function cellText(value: unknown): string {
   if (value == null) return "";
   if (typeof value !== "object") return String(value).trim();
   // These sheets contain formula cells that evaluate to an invalid Date, so
@@ -46,15 +46,29 @@ function cellText(value: unknown): string {
   return "";
 }
 
-// Scans the first `maxScan` rows and returns the 1-indexed row number with
-// the most non-empty text cells — the header row in these source sheets is
-// rarely row 1 (titles/blank spacer rows usually come first).
+// The header row in these source sheets is rarely row 1 — titles and blank
+// spacer rows usually come first — so it has to be found rather than assumed.
+// Counts only cells that look like a *label*: non-empty and not a number or a
+// date. Counting filled cells instead loses data — a budget row carrying more
+// computed columns than the header has labels then wins, is treated as the
+// header, and every row above the first data row is silently skipped.
+function labelCellCount(row: ExcelJS.Row): number {
+  return rowValues(row).filter((value) => {
+    if (value instanceof Date) return false;
+    if (typeof value === "number") return false;
+    const text = cellText(value);
+    if (text.length === 0) return false;
+    return !Number.isFinite(Number(text.replace(",", ".")));
+  }).length;
+}
+
+// Ties go to the earliest row: a header sits above its data, so when two rows
+// look equally label-like the first one is the header.
 export function findHeaderRow(sheet: ExcelJS.Worksheet, maxScan = 6): number {
   let bestRow = 1;
   let bestCount = -1;
   for (let r = 1; r <= Math.min(maxScan, sheet.rowCount); r++) {
-    const values = rowValues(sheet.getRow(r));
-    const count = values.filter((v) => cellText(v).length > 0).length;
+    const count = labelCellCount(sheet.getRow(r));
     if (count > bestCount) {
       bestCount = count;
       bestRow = r;
