@@ -17,6 +17,9 @@ export default async function DashboardLayout({
             <Link href="/projetos" className="hover:text-gray-900">
               Projetos
             </Link>
+            <Link href="/pessoas" className="hover:text-gray-900">
+              Pessoas
+            </Link>
           </nav>
           <div className="flex items-center gap-4 text-sm text-gray-500">
             <span>{session?.user?.email}</span>

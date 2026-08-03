@@ -1,13 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
+import { eur } from "@/lib/format";
 import type { MatchStatus } from "@/generated/prisma/client";
 import type { MatchCandidate } from "@/lib/reconciliation";
 import { resolveInvoiceMatch, markInvoiceNoMatch } from "./actions";
-
-function eur(value: number) {
-  return value.toLocaleString("pt-PT", { style: "currency", currency: "EUR" });
-}
 
 const STATUS_TABS: { key: MatchStatus | "ALL"; label: string }[] = [
   { key: "ALL", label: "Todas" },

@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { Prisma } from "@/generated/prisma/client";
 
 // Score weights for the allocation-suggestion algorithm (see plan §"Motor de
 // sugestão de alocação"). Kept as named constants so the breakdown returned
@@ -121,19 +122,23 @@ export function resolveMatchStatus(candidates: MatchCandidate[]): MatchResolutio
   return { status: "AMBIGUOUS", candidates };
 }
 
-// Recomputes and persists BudgetLine.executedAmount from the linked Invoice
-// rows. Call inside the same transaction as any change to an Invoice's
-// budgetLineId or eligibleAmount so the cache never drifts from reality.
+// Recomputes and persists BudgetLine.executedAmount from every kind of linked
+// execution row — invoices AND personnel-cost imputations. Call inside the same
+// transaction as any change to a row's budgetLineId or amount so the cache
+// never drifts from reality.
 export async function recomputeBudgetLineExecuted(
   tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0] | typeof prisma,
   budgetLineId: string,
 ) {
-  const result = await tx.invoice.aggregate({
-    where: { budgetLineId },
-    _sum: { eligibleAmount: true },
-  });
+  const [invoices, allocations] = await Promise.all([
+    tx.invoice.aggregate({ where: { budgetLineId }, _sum: { eligibleAmount: true } }),
+    tx.personnelAllocation.aggregate({ where: { budgetLineId }, _sum: { eligibleValue: true } }),
+  ]);
+  const total = new Prisma.Decimal(invoices._sum.eligibleAmount ?? 0).plus(
+    allocations._sum.eligibleValue ?? 0,
+  );
   await tx.budgetLine.update({
     where: { id: budgetLineId },
-    data: { executedAmount: result._sum.eligibleAmount ?? 0 },
+    data: { executedAmount: total },
   });
 }

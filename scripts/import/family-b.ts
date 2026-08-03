@@ -2,12 +2,14 @@ import {
   loadWorkbook,
   getSheet,
   findHeaderRow,
+  isRowEmpty,
   asString,
   asNumber,
   asDate,
   sourceRowId,
 } from "./lib/workbook";
 import { upsertInvoiceRow, type ImportCounters, type RawInvoiceRow } from "./lib/upsert-invoice";
+import { pruneStaleInvoices } from "./lib/prune";
 
 // The newer "PP_<Project>" sheets (Internacionalização, Defect Free) repeat
 // header names 3x ("Valor total"/"Valor s/ IVA"/"Valor IVA" for the
@@ -102,13 +104,31 @@ export async function importFamilyB(workbookPath: string, projectIds: Record<str
     const headerRow = findHeaderRow(sheet, 4); // these sheets have 2 blank/group-label rows before the field-name row
 
     const counters: ImportCounters = { processed: 0, matched: 0, unmatched: 0, ambiguous: 0 };
+    const seenRowIds: string[] = [];
+    let sawData = false;
 
     for (let r = headerRow + 1; r <= sheet.rowCount; r++) {
       const row = sheet.getRow(r);
       const supplierName = asString(row.getCell(map.supplierName).value);
       const presentedTotal = asNumber(row.getCell(map.presentedTotal).value);
       const presentedEligible = asNumber(row.getCell(map.presentedEligible).value);
-      if (!supplierName && presentedTotal == null) continue; // blank/footer row
+
+      // PP_Internacionalização holds three stacked tables (invoices, then a
+      // travel-costs table with entirely different columns, then loose hotel
+      // notes), separated by fully blank rows. Reading past that boundary
+      // applies the invoice column mapping to unrelated data, so stop there.
+      // The test must be whole-row: PP Defect Free contains a partially-filled
+      // row mid-table which is not a boundary.
+      if (isRowEmpty(row)) {
+        if (sawData) break;
+        continue;
+      }
+      // Within the invoice table, a row still needs to identify a supplier or
+      // carry a value — rows with only an activity label are not invoices.
+      // (Some real rows have the imputação columns not yet filled in, so a
+      // monetary value alone cannot be required here.)
+      if (!supplierName && presentedTotal == null && presentedEligible == null) continue;
+      sawData = true;
 
       const docNumber = asString(row.getCell(map.docNumber).value);
       const docDate = asDate(row.getCell(map.docDate).value);
@@ -145,10 +165,12 @@ export async function importFamilyB(workbookPath: string, projectIds: Record<str
         obs: null,
       };
 
+      seenRowIds.push(raw.sourceRowId);
       await upsertInvoiceRow(raw, counters);
     }
 
-    summary[map.projectCode] = { invoices: counters };
+    const pruned = await pruneStaleInvoices(projectId, map.sheetName, seenRowIds);
+    summary[map.projectCode] = { invoices: counters, pruned };
   }
 
   return summary;

@@ -1,21 +1,32 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
+import { eur } from "@/lib/format";
 
 export default async function DashboardPage() {
   const projects = await prisma.project.findMany({
-    include: {
-      budgetLines: true,
-      _count: { select: { invoices: true } },
-    },
+    include: { budgetLines: true },
     orderBy: { name: "asc" },
   });
 
-  const unmatchedCounts = await prisma.invoice.groupBy({
-    by: ["projectId"],
-    where: { matchStatus: { in: ["UNMATCHED", "AMBIGUOUS"] } },
-    _count: { _all: true },
-  });
-  const unmatchedByProject = new Map(unmatchedCounts.map((u) => [u.projectId, u._count._all]));
+  const [invoiceCounts, allocationCounts] = await Promise.all([
+    prisma.invoice.groupBy({
+      by: ["projectId"],
+      where: { matchStatus: { in: ["UNMATCHED", "AMBIGUOUS"] } },
+      _count: { _all: true },
+    }),
+    prisma.personnelAllocation.groupBy({
+      by: ["projectId"],
+      where: { matchStatus: { in: ["UNMATCHED", "AMBIGUOUS"] } },
+      _count: { _all: true },
+    }),
+  ]);
+  const unmatchedByProject = new Map<string, number>();
+  for (const row of [...invoiceCounts, ...allocationCounts]) {
+    unmatchedByProject.set(
+      row.projectId,
+      (unmatchedByProject.get(row.projectId) ?? 0) + row._count._all,
+    );
+  }
 
   return (
     <div>
@@ -60,18 +71,18 @@ export default async function DashboardPage() {
                   <div className="flex justify-between">
                     <dt className="text-gray-500">Orçamento elegível</dt>
                     <dd className="font-medium text-gray-900">
-                      {eligibleCost.toLocaleString("pt-PT", { style: "currency", currency: "EUR" })}
+                      {eur(eligibleCost)}
                     </dd>
                   </div>
                   <div className="flex justify-between">
                     <dt className="text-gray-500">Executado</dt>
                     <dd className="font-medium text-gray-900">
-                      {executed.toLocaleString("pt-PT", { style: "currency", currency: "EUR" })}{" "}
+                      {eur(executed)}{" "}
                       <span className="text-gray-400">({pct}%)</span>
                     </dd>
                   </div>
                   <div className="flex justify-between">
-                    <dt className="text-gray-500">Faturas por reconciliar</dt>
+                    <dt className="text-gray-500">Linhas por reconciliar</dt>
                     <dd className={unmatched > 0 ? "font-medium text-amber-600" : "text-gray-400"}>
                       {unmatched}
                     </dd>

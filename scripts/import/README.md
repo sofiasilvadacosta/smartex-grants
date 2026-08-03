@@ -13,9 +13,17 @@ invoice data) — `imports/` is gitignored.
 2. Set `DATABASE_URL` (`.env`) to the target database.
 3. Run `npm run db:import`.
 
-The import is idempotent: re-running it upserts rows keyed on a stable
-`sourceRowId` and never overwrites a budget-line link a human has already
-reconciled (`Invoice.reconciledAt` set).
+The import is idempotent in the ways that matter: re-running it upserts rows
+keyed on a stable `sourceRowId` (never duplicating) and never overwrites a
+budget-line link a human has already reconciled (`reconciledAt` set).
+
+One caveat worth knowing: for rows *not* yet reconciled by a human, the
+auto-match is re-evaluated on every run, and its score depends on each budget
+line's **remaining margin** — which grows as more execution rows load. So a
+second run can move some rows between `MATCHED` and `AMBIGUOUS` compared to the
+first. That is intended (the suggestion always reflects the best current
+information), but it means match results are not byte-identical run to run.
+Human decisions are the only thing frozen.
 
 ## Converting the legacy `.xls`
 
@@ -41,12 +49,16 @@ for sn in rb.sheet_names():
 wb.save("Grants_Approved_Execution_v3.xlsx")
 ```
 
-## Current scope (Fase 1)
+## Current scope
+
+Imported from `Grants_Approved_Execution_v3.xlsx`:
 
 - **Projects**: all 7 (from `DADOS` + the two projects not listed there but
   present in the grants workbook: RHAQ, Internacionalização).
-- **Budget lines + invoices, fully automated**: Produtech, TexP@ct (clean
-  `_Approved` + `_Investments` sheet pairs).
+- **Budget lines + invoices + RH cost imputation, fully automated**: Produtech,
+  TexP@ct (clean `_Approved` / `_Investments` / `_RH` sheet trios). The RH
+  totals reconcile to the cent against the source `_Approved` sheet's
+  "Executado" column, which is the main correctness check for this import.
 - **Invoices only** (no `_Approved`-equivalent sheet identified with
   confidence): Internacionalização, Defect Free — enter their budget lines
   manually via the UI for now.
@@ -54,4 +66,17 @@ wb.save("Grants_Approved_Execution_v3.xlsx")
   structurally different layout (FTE-based tables, different rubrica-key
   columns) that needs a dedicated mapping rather than a guessed one. Their
   `Project` row is seeded so they're visible in the app; budget lines and
-  invoices need a follow-up import script once that mapping is confirmed.
+  execution rows need a follow-up import once that mapping is confirmed.
+
+Imported from `Smartex_Gestao_Projetos_V4.xlsx`:
+
+- **People** (`DADOS`): 80 people with salary, profile and entry/exit dates.
+  `active` is derived from the free-text "Obs." column saying the person left,
+  since the source has no explicit flag.
+- **Work calendar** (`HorasProdutivas`): company-wide available hours per month.
+- **Per-person capacity and per-project hours** (`Recursos`): productive hours
+  per person/month, and hours allocated per person/project/month.
+
+A handful of RH rows reference people who are not in the `DADOS` list (former
+employees); those rows import with `personId` unresolved and are listed on the
+people page so they can be linked or ignored deliberately.

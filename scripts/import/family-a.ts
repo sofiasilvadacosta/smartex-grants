@@ -13,6 +13,7 @@ import {
   sourceRowId,
 } from "./lib/workbook";
 import { upsertInvoiceRow, type ImportCounters, type RawInvoiceRow } from "./lib/upsert-invoice";
+import { pruneStaleInvoices } from "./lib/prune";
 
 // "Produtech" and "TexP@ct" share one consistent sheet family: a clean
 // "<Project>_Approved" budget-by-rubrica sheet, and a "<Project>_Investments"
@@ -121,6 +122,7 @@ async function importInvestmentsSheet(
   const idx = buildHeaderIndex(sheet, headerRow);
 
   const col = (name: string) => idx.get(normalizeHeader(name));
+  const seenRowIds: string[] = [];
 
   for (let r = headerRow + 1; r <= sheet.rowCount; r++) {
     const row = sheet.getRow(r);
@@ -162,8 +164,11 @@ async function importInvestmentsSheet(
       obs: asString(cellAt(row, col("Obs"))),
     };
 
+    seenRowIds.push(raw.sourceRowId);
     await upsertInvoiceRow(raw, counters);
   }
+
+  return pruneStaleInvoices(projectId, sheetName, seenRowIds);
 }
 
 export async function importFamilyA(workbookPath: string, projectIds: Record<string, string>) {
@@ -177,9 +182,14 @@ export async function importFamilyA(workbookPath: string, projectIds: Record<str
     const budgetSummary = await importApprovedSheet(workbook, project.approvedSheet, projectId);
 
     const counters: ImportCounters = { processed: 0, matched: 0, unmatched: 0, ambiguous: 0 };
-    await importInvestmentsSheet(workbook, project.investmentsSheet, projectId, counters);
+    const pruned = await importInvestmentsSheet(
+      workbook,
+      project.investmentsSheet,
+      projectId,
+      counters,
+    );
 
-    summary[project.code] = { budgetLines: budgetSummary, invoices: counters };
+    summary[project.code] = { budgetLines: budgetSummary, invoices: counters, pruned };
   }
 
   return summary;

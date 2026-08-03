@@ -1,11 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
+import { eur } from "@/lib/format";
 import { createBudgetLine, updateBudgetLine } from "../actions";
-
-function eur(value: number) {
-  return value.toLocaleString("pt-PT", { style: "currency", currency: "EUR" });
-}
 
 export default async function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -13,14 +10,19 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
     where: { id },
     include: {
       budgetLines: { orderBy: { category: "asc" } },
-      _count: { select: { invoices: true } },
+      _count: { select: { invoices: true, allocations: true, paymentRequests: true } },
     },
   });
   if (!project) notFound();
 
-  const unmatchedCount = await prisma.invoice.count({
-    where: { projectId: id, matchStatus: { in: ["UNMATCHED", "AMBIGUOUS"] } },
-  });
+  const [unmatchedCount, unmatchedRhCount] = await Promise.all([
+    prisma.invoice.count({
+      where: { projectId: id, matchStatus: { in: ["UNMATCHED", "AMBIGUOUS"] } },
+    }),
+    prisma.personnelAllocation.count({
+      where: { projectId: id, matchStatus: { in: ["UNMATCHED", "AMBIGUOUS"] } },
+    }),
+  ]);
 
   const totalEligible = project.budgetLines.reduce((s, b) => s + Number(b.eligibleCost), 0);
   const totalExecuted = project.budgetLines.reduce((s, b) => s + Number(b.executedAmount), 0);
@@ -35,17 +37,36 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
             {project.endDate?.toLocaleDateString("pt-PT")}
           </p>
         </div>
-        <Link
-          href={`/projetos/${project.id}/faturas`}
-          className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-        >
-          Faturas ({project._count.invoices})
-          {unmatchedCount > 0 && (
-            <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
-              {unmatchedCount} por reconciliar
-            </span>
-          )}
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href={`/projetos/${project.id}/faturas`}
+            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            Faturas ({project._count.invoices})
+            {unmatchedCount > 0 && (
+              <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+                {unmatchedCount}
+              </span>
+            )}
+          </Link>
+          <Link
+            href={`/projetos/${project.id}/rh`}
+            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            RH ({project._count.allocations})
+            {unmatchedRhCount > 0 && (
+              <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+                {unmatchedRhCount}
+              </span>
+            )}
+          </Link>
+          <Link
+            href={`/projetos/${project.id}/pedidos-pagamento`}
+            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            Pedidos de pagamento ({project._count.paymentRequests})
+          </Link>
+        </div>
       </div>
 
       <dl className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3">

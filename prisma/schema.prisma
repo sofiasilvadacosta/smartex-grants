@@ -1,4 +1,4 @@
-// Smartex Grants — Phase 1 schema (auth, projects, budget lines, invoices, import tracking).
+// Smartex Grants — Prisma schema. Fase 1: projetos, rubricas, faturas. Fase 2: pessoas, RH, pedidos de pagamento.
 // See /root/.claude/plans/refactored-giggling-kettle.md for the full architecture and later phases.
 
 generator client {
@@ -30,14 +30,18 @@ model User {
   accounts Account[]
   sessions Session[]
 
-  createdProjects        Project[]         @relation("ProjectCreatedBy")
-  updatedProjects        Project[]         @relation("ProjectUpdatedBy")
-  createdBudgetLines     BudgetLine[]      @relation("BudgetLineCreatedBy")
-  updatedBudgetLines     BudgetLine[]      @relation("BudgetLineUpdatedBy")
-  budgetChangeLogEntries BudgetChangeLog[] @relation("BudgetChangeLogChangedBy")
-  createdInvoices        Invoice[]         @relation("InvoiceCreatedBy")
-  updatedInvoices        Invoice[]         @relation("InvoiceUpdatedBy")
-  reconciledInvoices     Invoice[]         @relation("InvoiceReconciledBy")
+  createdProjects         Project[]             @relation("ProjectCreatedBy")
+  updatedProjects         Project[]             @relation("ProjectUpdatedBy")
+  createdBudgetLines      BudgetLine[]          @relation("BudgetLineCreatedBy")
+  updatedBudgetLines      BudgetLine[]          @relation("BudgetLineUpdatedBy")
+  budgetChangeLogEntries  BudgetChangeLog[]     @relation("BudgetChangeLogChangedBy")
+  createdInvoices         Invoice[]             @relation("InvoiceCreatedBy")
+  updatedInvoices         Invoice[]             @relation("InvoiceUpdatedBy")
+  reconciledInvoices      Invoice[]             @relation("InvoiceReconciledBy")
+  reconciledAllocations   PersonnelAllocation[] @relation("PersonnelAllocationReconciledBy")
+  createdPaymentRequests  PaymentRequest[]      @relation("PaymentRequestCreatedBy")
+  createdPaymentDecisions PaymentDecision[]     @relation("PaymentDecisionCreatedBy")
+  uploadedAttachments     Attachment[]          @relation("AttachmentUploadedBy")
 }
 
 model Account {
@@ -92,8 +96,11 @@ model Project {
   endDate        DateTime?
   status         ProjectStatus @default(ACTIVE)
 
-  budgetLines BudgetLine[]
-  invoices    Invoice[]
+  budgetLines      BudgetLine[]
+  invoices         Invoice[]
+  allocations      PersonnelAllocation[]
+  hoursAllocations ProjectHoursAllocation[]
+  paymentRequests  PaymentRequest[]
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -105,9 +112,9 @@ model Project {
 
 // A "rubrica orçamental": one approved budget category within a project.
 model BudgetLine {
-  id        String @id @default(cuid())
-  projectId String
-  category  String
+  id              String  @id @default(cuid())
+  projectId       String
+  category        String
   // "" (not null) when the rubrica has no TRL phase — a nullable column can't
   // be used reliably inside the @@unique([projectId, category, trlPhase])
   // below (NULL isn't comparable in SQL, and Prisma's compound-unique input
@@ -115,13 +122,15 @@ model BudgetLine {
   trlPhase        String  @default("")
   eligibleCost    Decimal @db.Decimal(14, 2)
   financingAmount Decimal @db.Decimal(14, 2)
-  // Denormalized cache of SUM(Invoice.eligibleAmount) for this line, recomputed
-  // transactionally whenever a linked Invoice's budgetLineId/amount changes.
+  // Denormalized cache of SUM(Invoice.eligibleAmount) + SUM(PersonnelAllocation.eligibleValue)
+  // for this line, recomputed transactionally whenever a linked row's
+  // budgetLineId or amount changes (see recomputeBudgetLineExecuted).
   executedAmount  Decimal @default(0) @db.Decimal(14, 2)
 
-  project    Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  invoices   Invoice[]
-  changeLogs BudgetChangeLog[]
+  project     Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  invoices    Invoice[]
+  allocations PersonnelAllocation[]
+  changeLogs  BudgetChangeLog[]
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -173,9 +182,10 @@ enum MatchMethod {
 }
 
 model Invoice {
-  id           String  @id @default(cuid())
-  projectId    String
-  budgetLineId String?
+  id               String  @id @default(cuid())
+  projectId        String
+  budgetLineId     String?
+  paymentRequestId String?
 
   // Raw invoice fields (from *_Investments / PP sheets)
   category         String
@@ -221,8 +231,9 @@ model Invoice {
   sourceSheet String
   sourceRowId String
 
-  project    Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  budgetLine BudgetLine? @relation(fields: [budgetLineId], references: [id], onDelete: SetNull)
+  project        Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  budgetLine     BudgetLine?     @relation(fields: [budgetLineId], references: [id], onDelete: SetNull)
+  paymentRequest PaymentRequest? @relation(fields: [paymentRequestId], references: [id], onDelete: SetNull)
 
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -235,6 +246,196 @@ model Invoice {
   @@unique([projectId, sourceRowId])
   @@index([projectId, matchStatus])
   @@index([budgetLineId])
+  @@index([paymentRequestId])
+}
+
+// ---------- People & capacity ----------
+
+model Person {
+  id          String    @id @default(cuid())
+  name        String
+  initials    String    @unique
+  grossSalary Decimal?  @db.Decimal(12, 2)
+  profile     String?
+  entryDate   DateTime?
+  exitDate    DateTime?
+  obs         String?
+  active      Boolean   @default(true)
+
+  capacities       PersonMonthCapacity[]
+  hoursAllocations ProjectHoursAllocation[]
+  allocations      PersonnelAllocation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Company-wide working-hours calendar (HorasProdutivas sheet): how many hours
+// a full-time month contains, independent of any person.
+model WorkCalendar {
+  yearMonth      String @id // "YYYY-MM"
+  availableHours Int
+}
+
+// Per-person productive hours in a month (Recursos sheet, "Horas Produtivas"
+// row of each person's block) — capacity after holidays/absences.
+model PersonMonthCapacity {
+  id              String  @id @default(cuid())
+  personId        String
+  yearMonth       String
+  productiveHours Decimal @db.Decimal(8, 2)
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@unique([personId, yearMonth])
+}
+
+// Hours a person is allocated to a project in a month (Recursos sheet, the
+// per-project rows of each person's block). This is the *hours* view used for
+// people-allocation planning — distinct from PersonnelAllocation, which is the
+// eligible-*cost* imputation reported to the funding body.
+model ProjectHoursAllocation {
+  id        String  @id @default(cuid())
+  personId  String
+  projectId String
+  yearMonth String
+  hours     Decimal @db.Decimal(8, 2)
+
+  person  Person  @relation(fields: [personId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([personId, projectId, yearMonth])
+  @@index([projectId, yearMonth])
+}
+
+// ---------- Execution: personnel cost imputation (*_RH sheets) ----------
+
+model PersonnelAllocation {
+  id               String  @id @default(cuid())
+  projectId        String
+  budgetLineId     String?
+  personId         String?
+  paymentRequestId String?
+
+  // Source person label verbatim (e.g. "1 - Diogo Afonso Correia Remião");
+  // personId is resolved by name match and may stay null when unresolved.
+  rawPersonLabel     String
+  category           String
+  yearMonth          String
+  eligibleBaseSalary Decimal  @db.Decimal(12, 2)
+  allocationPercent  Decimal  @db.Decimal(6, 4)
+  socialSecurityRate Decimal  @db.Decimal(6, 4)
+  eligibleValue      Decimal  @db.Decimal(14, 2)
+  ppNumber           String?
+  certifiedEligible  Boolean?
+  obs                String?
+
+  // Same reconciliation model as Invoice: the "Nº ordem (mapa investim)"
+  // string is the intended BudgetLine link but is inconsistent in the source.
+  rawSourceRef    String?
+  matchStatus     MatchStatus  @default(UNMATCHED)
+  matchConfidence Decimal?     @db.Decimal(5, 2)
+  matchMethod     MatchMethod?
+  matchCandidates Json?
+  reconciledById  String?
+  reconciledAt    DateTime?
+
+  sourceSheet String
+  sourceRowId String
+
+  project        Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  budgetLine     BudgetLine?     @relation(fields: [budgetLineId], references: [id], onDelete: SetNull)
+  person         Person?         @relation(fields: [personId], references: [id], onDelete: SetNull)
+  paymentRequest PaymentRequest? @relation(fields: [paymentRequestId], references: [id], onDelete: SetNull)
+  reconciledBy   User?           @relation("PersonnelAllocationReconciledBy", fields: [reconciledById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, sourceRowId])
+  @@index([projectId, matchStatus])
+  @@index([budgetLineId])
+  @@index([paymentRequestId])
+}
+
+// ---------- Payment requests & decisions ----------
+
+enum DecisionStatus {
+  PENDING
+  APROVADO
+  PARCIAL
+  REJEITADO
+}
+
+model PaymentRequest {
+  id              String    @id @default(cuid())
+  projectId       String
+  ppNumber        String
+  submissionDate  DateTime?
+  requestedAmount Decimal?  @db.Decimal(14, 2)
+  notes           String?
+
+  project     Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  invoices    Invoice[]
+  allocations PersonnelAllocation[]
+  decisions   PaymentDecision[]
+  attachments Attachment[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  createdBy   User?    @relation("PaymentRequestCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([projectId, ppNumber])
+}
+
+// 1:N off PaymentRequest (not 1:1) because grant decisions get revised or
+// appealed in practice; isCurrent marks the decision in force.
+model PaymentDecision {
+  id               String         @id @default(cuid())
+  paymentRequestId String
+  decisionDate     DateTime?
+  status           DecisionStatus @default(PENDING)
+  approvedAmount   Decimal?       @db.Decimal(14, 2)
+  notes            String?
+  isCurrent        Boolean        @default(true)
+
+  paymentRequest PaymentRequest @relation(fields: [paymentRequestId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  createdBy   User?    @relation("PaymentDecisionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([paymentRequestId])
+}
+
+enum AttachmentKind {
+  REQUEST_DOC
+  DECISION_DOC
+}
+
+// Uploaded supporting documents (the Word/PDF decision letters). Stored as
+// bytea in Postgres rather than an external blob store: these are a handful of
+// small documents per project, so keeping them in the database avoids a second
+// service to provision and keeps backups atomic. Uploads are size-capped in
+// the upload action.
+model Attachment {
+  id               String         @id @default(cuid())
+  paymentRequestId String
+  kind             AttachmentKind
+  filename         String
+  mimeType         String
+  sizeBytes        Int
+  content          Bytes
+
+  paymentRequest PaymentRequest @relation(fields: [paymentRequestId], references: [id], onDelete: Cascade)
+
+  uploadedAt   DateTime @default(now())
+  uploadedById String?
+  uploadedBy   User?    @relation("AttachmentUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([paymentRequestId])
 }
 
 // ---------- Import tracking ----------

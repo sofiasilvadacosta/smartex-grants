@@ -20,15 +20,30 @@ export function rowValues(row: ExcelJS.Row): unknown[] {
   return Array.isArray(values) ? values : [];
 }
 
+// exceljs returns cell values as plain scalars, or as objects for hyperlinks
+// ({text}), formulas ({result}), rich text ({richText:[{text}]}) and errors
+// ({error}). Without unwrapping all of them, String() yields "[object Object]"
+// and that string ends up stored as real data.
 function cellText(value: unknown): string {
   if (value == null) return "";
-  if (typeof value === "object" && "text" in (value as Record<string, unknown>)) {
-    return String((value as { text: unknown }).text ?? "").trim();
+  if (typeof value !== "object") return String(value).trim();
+  // These sheets contain formula cells that evaluate to an invalid Date, so
+  // guard before formatting — toISOString() throws on those.
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? "" : value.toISOString();
   }
-  if (typeof value === "object" && "result" in (value as Record<string, unknown>)) {
-    return String((value as { result: unknown }).result ?? "").trim();
+
+  const obj = value as Record<string, unknown>;
+  if (Array.isArray(obj.richText)) {
+    return (obj.richText as { text?: unknown }[])
+      .map((part) => String(part?.text ?? ""))
+      .join("")
+      .trim();
   }
-  return String(value).trim();
+  if ("text" in obj) return String(obj.text ?? "").trim();
+  if ("result" in obj) return cellText(obj.result);
+  if ("error" in obj) return "";
+  return "";
 }
 
 // Scans the first `maxScan` rows and returns the 1-indexed row number with
@@ -70,6 +85,13 @@ export function buildHeaderIndex(sheet: ExcelJS.Worksheet, headerRow: number): M
   return index;
 }
 
+// True only when every cell in the row is empty. Used to detect the boundary
+// between stacked tables in one sheet — a partially-filled row (e.g. a section
+// label in the first columns) is NOT a boundary and must not stop the read.
+export function isRowEmpty(row: ExcelJS.Row): boolean {
+  return rowValues(row).every((value) => cellText(value).length === 0);
+}
+
 export function cellAt(row: ExcelJS.Row, col: number | undefined): unknown {
   if (!col) return undefined;
   return row.getCell(col).value;
@@ -82,6 +104,9 @@ export function asString(value: unknown): string | null {
 
 export function asNumber(value: unknown): number | null {
   if (value == null || value === "") return null;
+  // Number(new Date()) is a valid timestamp, which would silently turn a date
+  // cell into a nonsense amount — reject dates explicitly.
+  if (value instanceof Date) return null;
   if (typeof value === "object" && "result" in (value as Record<string, unknown>)) {
     return asNumber((value as { result: unknown }).result);
   }
@@ -91,7 +116,8 @@ export function asNumber(value: unknown): number | null {
 
 export function asDate(value: unknown): Date | null {
   if (value == null || value === "") return null;
-  if (value instanceof Date) return value;
+  // An Invalid Date reaching Prisma fails the write, so filter it out here.
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
   if (typeof value === "object" && "result" in (value as Record<string, unknown>)) {
     return asDate((value as { result: unknown }).result);
   }
