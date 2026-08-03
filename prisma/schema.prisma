@@ -147,6 +147,13 @@ model BudgetLine {
   // for this line, recomputed transactionally whenever a linked row's
   // budgetLineId or amount changes (see recomputeBudgetLineExecuted).
   executedAmount  Decimal  @default(0) @db.Decimal(14, 2)
+  // What the funder's own payment-request document says was executed on this
+  // line, when we have that document. Kept beside executedAmount rather than
+  // replacing it so the two can be compared: a divergence means the platform
+  // is missing rows (or holds rows the funder rejected), which is exactly what
+  // needs to be seen before submitting the next request. Null = no official
+  // figure imported for this line.
+  declaredExecuted Decimal? @db.Decimal(14, 2)
 
   project     Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
   invoices    Invoice[]

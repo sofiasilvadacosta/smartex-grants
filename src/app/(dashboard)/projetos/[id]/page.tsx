@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
+import { declaredVsExecuted } from "@/lib/declared-vs-executed";
 import { eur } from "@/lib/format";
 import { createBudgetLine, updateBudgetLine } from "../actions";
 
@@ -15,18 +16,24 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
   });
   if (!project) notFound();
 
-  const [unmatchedCount, unmatchedRhCount] = await Promise.all([
+  const [unmatchedCount, unmatchedRhCount, divergences] = await Promise.all([
     prisma.invoice.count({
       where: { projectId: id, matchStatus: { in: ["UNMATCHED", "AMBIGUOUS"] } },
     }),
     prisma.personnelAllocation.count({
       where: { projectId: id, matchStatus: { in: ["UNMATCHED", "AMBIGUOUS"] } },
     }),
+    declaredVsExecuted(id),
   ]);
 
   const isFteBased = project.fteRate !== null;
   const totalEligible = project.budgetLines.reduce((s, b) => s + Number(b.eligibleCost), 0);
   const totalExecuted = project.budgetLines.reduce((s, b) => s + Number(b.executedAmount), 0);
+  // Only projects whose payment-request document has been imported have an
+  // official figure to compare against.
+  const hasDeclared = project.budgetLines.some((b) => b.declaredExecuted !== null);
+  const columnCount = 7 + (isFteBased ? 1 : 0) + (hasDeclared ? 1 : 0);
+  const divergenceTotal = divergences.reduce((s, d) => s + d.difference, 0);
 
   return (
     <div>
@@ -85,6 +92,41 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
         </div>
       </dl>
 
+      {divergences.length > 0 && (
+        <section className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <h2 className="text-sm font-medium text-amber-900">
+            Divergências face ao pedido de pagamento
+          </h2>
+          <p className="mt-1 text-xs text-amber-800">
+            {divergences.length} rubrica(s) em que a execução registada aqui não coincide com o
+            que foi declarado ao financiador — diferença total de {eur(divergenceTotal)}. Rever
+            antes do próximo pedido.
+          </p>
+          <table className="mt-3 min-w-full text-xs">
+            <thead>
+              <tr className="text-left text-amber-900">
+                <th className="py-1 pr-4 font-medium">Nº ordem</th>
+                <th className="py-1 pr-4 font-medium">Rubrica</th>
+                <th className="py-1 pr-4 text-right font-medium">Declarado</th>
+                <th className="py-1 pr-4 text-right font-medium">Na plataforma</th>
+                <th className="py-1 text-right font-medium">Diferença</th>
+              </tr>
+            </thead>
+            <tbody className="text-amber-900">
+              {divergences.map((d) => (
+                <tr key={`${d.activity}-${d.orderNumber}-${d.category}`}>
+                  <td className="py-1 pr-4">{d.orderNumber || "—"}</td>
+                  <td className="py-1 pr-4">{d.category}</td>
+                  <td className="py-1 pr-4 text-right">{eur(d.declared)}</td>
+                  <td className="py-1 pr-4 text-right">{eur(d.executed)}</td>
+                  <td className="py-1 text-right font-medium">{eur(d.difference)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
       <h2 className="mt-8 text-lg font-medium text-gray-900">Rubricas orçamentais</h2>
       <div className="mt-3 overflow-hidden rounded-lg border border-gray-200 bg-white">
         <table className="min-w-full divide-y divide-gray-200 text-sm">
@@ -104,6 +146,9 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
               <th className="px-4 py-2 text-right font-medium text-gray-500">Custo elegível</th>
               <th className="px-4 py-2 text-right font-medium text-gray-500">Financiamento</th>
               <th className="px-4 py-2 text-right font-medium text-gray-500">Executado</th>
+              {hasDeclared && (
+                <th className="px-4 py-2 text-right font-medium text-gray-500">Declarado</th>
+              )}
               <th className="px-4 py-2 text-right font-medium text-gray-500">Por executar</th>
               <th className="px-4 py-2"></th>
             </tr>
@@ -129,6 +174,18 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
                   <td className="px-4 py-2 text-right text-gray-900">{eur(eligibleCost)}</td>
                   <td className="px-4 py-2 text-right text-gray-500">{eur(Number(line.financingAmount))}</td>
                   <td className="px-4 py-2 text-right text-gray-900">{eur(executedAmount)}</td>
+                  {hasDeclared && (
+                    <td
+                      className={`px-4 py-2 text-right ${
+                        line.declaredExecuted !== null &&
+                        Math.abs(Number(line.declaredExecuted) - executedAmount) > 0.01
+                          ? "text-amber-700"
+                          : "text-gray-500"
+                      }`}
+                    >
+                      {line.declaredExecuted === null ? "—" : eur(Number(line.declaredExecuted))}
+                    </td>
+                  )}
                   <td className={`px-4 py-2 text-right ${remaining < 0 ? "text-red-600" : "text-gray-500"}`}>
                     {eur(remaining)}
                   </td>
@@ -182,7 +239,7 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
             })}
             {project.budgetLines.length === 0 && (
               <tr>
-                <td colSpan={isFteBased ? 8 : 7} className="px-4 py-6 text-center text-gray-400">
+                <td colSpan={columnCount} className="px-4 py-6 text-center text-gray-400">
                   Sem rubricas ainda.
                 </td>
               </tr>

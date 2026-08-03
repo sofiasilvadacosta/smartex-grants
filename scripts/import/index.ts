@@ -9,6 +9,9 @@ import { importPeopleAndCapacity } from "./people";
 import { importRhSheets } from "./rh";
 import { importFteProjects } from "./fte-projects";
 import { importQuadroInvestimentos } from "./pp-quadro";
+import { importPessoalFromPp } from "./pp-pessoal";
+import { importMovimentos } from "./pp-movimentos";
+import { syncPaymentRequestsFromExecution } from "./lib/sync-payment-requests";
 
 const IMPORTS_DIR = path.resolve(__dirname, "../../imports");
 const GRANTS_WORKBOOK = path.join(IMPORTS_DIR, "Grants_Approved_Execution_v3.xlsx");
@@ -144,9 +147,6 @@ async function main() {
   const quadroSummary = await importQuadroInvestimentos(
     path.join(IMPORTS_DIR, "DefectFree_Quadro_Investimentos.csv"),
     projectIds.DEFECT_FREE,
-    // The PDF does not state its own request number; "2" is what the project's
-    // invoices carry in "Nº PP". Confirm before relying on it for reporting.
-    "2",
   );
   if (quadroSummary) {
     console.log("DEFECT_FREE:", JSON.stringify(quadroSummary, null, 2));
@@ -155,6 +155,34 @@ async function main() {
       "  (sem DefectFree_Quadro_Investimentos.csv em imports/ — ver scripts/import/README.md)",
     );
   }
+
+  const movimentosSummary = await importMovimentos(
+    path.join(IMPORTS_DIR, "FPP012270004_Movimentos.xlsx"),
+    projectIds.DEFECT_FREE,
+    "PP Defect Free",
+  );
+  if (movimentosSummary) {
+    console.log("\nDEFECT_FREE movimentos:", JSON.stringify(movimentosSummary, null, 2));
+  }
+
+  const pessoalSummary = await importPessoalFromPp(
+    path.join(IMPORTS_DIR, "DefectFree_Pessoal.csv"),
+    projectIds.DEFECT_FREE,
+  );
+  if (pessoalSummary) {
+    console.log("\nDEFECT_FREE pessoal:", JSON.stringify(pessoalSummary, null, 2));
+    console.warn(
+      `\n⚠ As ${pessoalSummary.processed} linhas de pessoal do Defect Free ficam por reconciliar:\n` +
+        `  o formulário do portal não indica a atividade nem o Nº de ordem de cada linha, e\n` +
+        `  inferi-la pela descrição não reconcilia com os totais por atividade do quadro\n` +
+        `  aprovado. Atribuir a rubrica no ecrã de reconciliação.`,
+    );
+  }
+
+  // Runs after every execution import: the payment requests and the amount each
+  // one submitted are derived from the rows that declare them, never assumed.
+  const ppSync = await syncPaymentRequestsFromExecution(projectIds.DEFECT_FREE);
+  console.log("\nDEFECT_FREE pedidos de pagamento:", JSON.stringify(ppSync, null, 2));
 
   console.log(
     `\nNão importados (excluídos por decisão): ${PENDING_RECONCILIATION_PROJECTS.join(", ")}`,

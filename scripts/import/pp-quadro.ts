@@ -62,7 +62,6 @@ function parseCsv(path: string): QuadroRow[] {
 export async function importQuadroInvestimentos(
   csvPath: string,
   projectId: string,
-  ppNumber: string,
 ): Promise<QuadroImportSummary | null> {
   if (!existsSync(csvPath)) return null;
 
@@ -101,7 +100,11 @@ export async function importQuadroInvestimentos(
       }
       await prisma.budgetLine.update({
         where: { id: existing.id },
-        data: { orderNumber: row.orderNumber, eligibleCost: row.approved },
+        data: {
+          orderNumber: row.orderNumber,
+          eligibleCost: row.approved,
+          declaredExecuted: row.declaredExecuted,
+        },
       });
       updated++;
     } else {
@@ -113,6 +116,7 @@ export async function importQuadroInvestimentos(
           trlPhase,
           orderNumber: row.orderNumber,
           eligibleCost: row.approved,
+          declaredExecuted: row.declaredExecuted,
           financingAmount: 0,
         },
       });
@@ -172,30 +176,6 @@ export async function importQuadroInvestimentos(
 
   const stillUnmatched = await prisma.invoice.count({
     where: { projectId, matchStatus: { in: ["UNMATCHED", "AMBIGUOUS"] } },
-  });
-
-  // The Quadro *is* the payment-request form, so register the request with the
-  // amounts it declares: direct eligible expense plus the indirect costs the
-  // funder computes on top of it.
-  const declaredDirect = rows.reduce((s, r) => s + r.declaredExecuted, 0);
-  const declaredIndirect = rows.reduce((s, r) => s + r.declaredIndirect, 0);
-  const request = await prisma.paymentRequest.upsert({
-    where: { projectId_ppNumber: { projectId, ppNumber } },
-    update: { requestedAmount: declaredDirect + declaredIndirect },
-    create: {
-      projectId,
-      ppNumber,
-      requestedAmount: declaredDirect + declaredIndirect,
-      notes:
-        `Valores do formulário de pedido de pagamento: despesa direta ` +
-        `${declaredDirect.toFixed(2)} € + custos indiretos ${declaredIndirect.toFixed(2)} €.`,
-    },
-  });
-  // Attach the execution rows this request declares, so the "ligado" total on
-  // the payment-request page can be compared against what was submitted.
-  await prisma.invoice.updateMany({
-    where: { projectId, ppNumber },
-    data: { paymentRequestId: request.id },
   });
 
   const expected = new Set(rows.map((r) => r.orderNumber));

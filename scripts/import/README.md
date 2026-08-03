@@ -99,14 +99,66 @@ become budget data. It produces one row per **Nº ordem** — the unit the funde
 approves and reports against — with the activity, official cost classification
 (a/c/e/f/h/i), year, approved amount and the amounts declared as executed.
 
-`pp-quadro.ts` then creates one budget line per Nº ordem, registers the payment
-request with the declared totals, and links invoices to their budget line
-**exactly by Nº ordem** (no text matching), since the PP sheets carry the same
-number. Budget lines whose Nº ordem is no longer in the CSV are reported rather
-than deleted — they may already carry execution or have been added by hand.
+`pp-quadro.ts` then creates one budget line per Nº ordem and links invoices to
+their budget line **exactly by Nº ordem** (no text matching), since the PP
+sheets carry the same number. It also stores the funder's own declared execution
+per line in `BudgetLine.declaredExecuted`, which the project page compares
+against the execution actually registered here — see "Verifying against the
+portal" below. Budget lines whose Nº ordem is no longer in the CSV are reported
+rather than deleted — they may already carry execution or have been added by
+hand.
 
-Note: the PDF does not state its own request number; the importer is configured
-with `"2"` because that is what the project's invoices carry in "Nº PP".
+### Movements and personnel from the portal's own exports
+
+Two portal exports supersede the working spreadsheet for Defect Free, because
+both carry data the spreadsheet doesn't:
+
+- `imports/FPP012270004_Movimentos.xlsx` — the portal's "Lista geral de
+  movimentos". Every row carries the Nº ordem, so all 45 invoices link exactly,
+  and it includes travel rows the working sheet keeps in a separate table.
+  `pp-movimentos.ts` deletes the superseded working-sheet rows after importing,
+  otherwise execution would be counted twice.
+- `imports/DefectFree_Pessoal.csv`, produced from the payment request's
+  "Pessoal" table:
+
+  ```bash
+  python3 scripts/import/extract-pp-pessoas.py \
+    Pedido_de_Pagamento_defect_free_pessoas.pdf \
+    imports/DefectFree_Pessoal.csv
+  ```
+
+  Same total-verification guard as the Quadro extractor. These 232 rows import
+  **UNMATCHED on purpose**: the portal's personnel table has no activity or
+  Nº ordem column, and inferring the activity from the free-text description was
+  tested against the approved table's per-activity totals and did not reconcile
+  (the grand total matched, every individual activity did not). A wrong rubrica
+  is worse than an unassigned one, so they are linked through the reconciliation
+  screen instead.
+
+### Payment requests are derived, never assumed
+
+`lib/sync-payment-requests.ts` runs last and builds the `PaymentRequest` rows
+from the "Nº PP" the execution rows themselves carry, setting each request's
+submitted amount to the sum of its rows and deleting any request left with no
+rows, no decision and no attachment. Defect Free's requests are 3 and 4 — an
+earlier version of this import assumed "2" from the working spreadsheet, and the
+portal export disproved it.
+
+### Verifying against the portal
+
+The Quadro CSV's declared-executed column is loaded per line, so the project
+page can show, per rubrica, what the funder was told versus what this platform
+holds. For Defect Free that currently surfaces exactly two gaps, totalling
+333 816,71 €:
+
+- **327 592,71 €** — the 232 personnel rows, imported but not yet assigned to a
+  rubrica (see above).
+- **6 224,00 €** — travel on Nº ordem 42 (1 385,00 €) and 46 (4 839,00 €)
+  declared to the funder without a corresponding invoice in the Movimentos
+  export, i.e. per-diem style costs. Needs the portal's travel export to close.
+
+Everything else reconciles to the cent: approved 789 615,87 €, declared executed
+497 707,88 €, personnel 327 592,71 €, movements 163 891,17 €.
 
 Imported from `Smartex_Gestao_Projetos_V4.xlsx`:
 
