@@ -43,7 +43,10 @@ async function upsertBudgetLine(
   financingAmount: number,
 ): Promise<{ wasCreated: boolean }> {
   const existing = await prisma.budgetLine.findUnique({
-    where: { projectId_category_trlPhase: { projectId, category, trlPhase } },
+    // Invoice-based projects have no per-activity budget split, so activity is "".
+    where: {
+      projectId_activity_category_trlPhase: { projectId, activity: "", category, trlPhase },
+    },
   });
 
   if (!existing) {

@@ -8,6 +8,12 @@ const ALLOWED_EMAIL_DOMAIN = "@smartex.ai";
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(prisma),
   session: { strategy: "database" },
+  // Auth.js only auto-trusts the request host on Vercel. Without this, any
+  // other production run (self-hosted, a preview container, `next start`
+  // locally) rejects every request with UntrustedHost and bounces users to the
+  // login page. Safe here because the app is always served behind a proxy that
+  // sets the Host header itself.
+  trustHost: true,
   providers: [Google],
   pages: {
     signIn: "/login",

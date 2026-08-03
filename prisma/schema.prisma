@@ -95,6 +95,11 @@ model Project {
   startDate      DateTime?
   endDate        DateTime?
   status         ProjectStatus @default(ACTIVE)
+  // Texia and TexQualis are budgeted and executed at a fixed eligible cost per
+  // FTE (5189 € and 4432 € respectively) instead of from real salaries, so
+  // execution for these projects is entered as FTE and multiplied by this rate.
+  // Null for projects that report real invoiced/salary costs.
+  fteRate        Decimal?      @db.Decimal(12, 2)
 
   budgetLines      BudgetLine[]
   invoices         Invoice[]
@@ -112,20 +117,29 @@ model Project {
 
 // A "rubrica orçamental": one approved budget category within a project.
 model BudgetLine {
-  id              String  @id @default(cuid())
+  id              String   @id @default(cuid())
   projectId       String
+  // For invoice-based projects this is the cost category ("RH 3-4",
+  // "Equipamentos"). For FTE-based projects (Texia, TexQualis) the budget is
+  // approved per profile within an activity, so category holds the profile.
   category        String
-  // "" (not null) when the rubrica has no TRL phase — a nullable column can't
-  // be used reliably inside the @@unique([projectId, category, trlPhase])
-  // below (NULL isn't comparable in SQL, and Prisma's compound-unique input
-  // type rejects null there for exactly that reason).
-  trlPhase        String  @default("")
-  eligibleCost    Decimal @db.Decimal(14, 2)
-  financingAmount Decimal @db.Decimal(14, 2)
+  // "" (not null) when the rubrica has no TRL phase / no activity — nullable
+  // columns can't be used reliably inside the @@unique below (NULL isn't
+  // comparable in SQL, and Prisma's compound-unique input type rejects null
+  // there for exactly that reason).
+  trlPhase        String   @default("")
+  activity        String   @default("")
+  // The funder's own job-title for this profile ("Perfil no Balcão"), needed
+  // when reporting back to them. Null for invoice-based projects.
+  externalProfile String?
+  // Approved FTE for this line; the € below is plannedFte × Project.fteRate.
+  plannedFte      Decimal? @db.Decimal(8, 2)
+  eligibleCost    Decimal  @db.Decimal(14, 2)
+  financingAmount Decimal  @db.Decimal(14, 2)
   // Denormalized cache of SUM(Invoice.eligibleAmount) + SUM(PersonnelAllocation.eligibleValue)
   // for this line, recomputed transactionally whenever a linked row's
   // budgetLineId or amount changes (see recomputeBudgetLineExecuted).
-  executedAmount  Decimal @default(0) @db.Decimal(14, 2)
+  executedAmount  Decimal  @default(0) @db.Decimal(14, 2)
 
   project     Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
   invoices    Invoice[]
@@ -139,7 +153,7 @@ model BudgetLine {
   createdBy   User?    @relation("BudgetLineCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   updatedBy   User?    @relation("BudgetLineUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
 
-  @@unique([projectId, category, trlPhase])
+  @@unique([projectId, activity, category, trlPhase])
 }
 
 enum ChangeType {
@@ -325,6 +339,10 @@ model PersonnelAllocation {
   eligibleBaseSalary Decimal  @db.Decimal(12, 2)
   allocationPercent  Decimal  @db.Decimal(6, 4)
   socialSecurityRate Decimal  @db.Decimal(6, 4)
+  // Set instead of the salary fields on FTE-based projects, where
+  // eligibleValue = fte × Project.fteRate rather than a real salary
+  // computation. Null on invoice/salary-based projects.
+  fte                Decimal? @db.Decimal(8, 2)
   eligibleValue      Decimal  @db.Decimal(14, 2)
   ppNumber           String?
   certifiedEligible  Boolean?

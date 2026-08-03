@@ -7,6 +7,7 @@ import { importFamilyA } from "./family-a";
 import { importFamilyB, PENDING_RECONCILIATION_PROJECTS } from "./family-b";
 import { importPeopleAndCapacity } from "./people";
 import { importRhSheets } from "./rh";
+import { importFteProjects } from "./fte-projects";
 
 const IMPORTS_DIR = path.resolve(__dirname, "../../imports");
 const GRANTS_WORKBOOK = path.join(IMPORTS_DIR, "Grants_Approved_Execution_v3.xlsx");
@@ -102,8 +103,44 @@ async function main() {
   }
   console.log(JSON.stringify(summaryRh, null, 2));
 
+  console.log("\nImporting FTE-based budgets (Texia, TexQualis)...");
+  const startFte = new Date();
+  const summaryFte = await importFteProjects(GRANTS_WORKBOOK, projectIds);
+  for (const [code, s] of Object.entries(summaryFte)) {
+    await recordImportRun(
+      path.basename(GRANTS_WORKBOOK),
+      `${code}_orcamento_FTE`,
+      {
+        processed: s.budgetLinesCreated + s.budgetLinesUpdated,
+        matched: s.budgetLinesCreated + s.budgetLinesUpdated,
+        unmatched: s.skippedRows.length,
+        ambiguous: 0,
+      },
+      grantsHash,
+      startFte,
+    );
+  }
+  console.log(JSON.stringify(summaryFte, null, 2));
+  for (const [code, s] of Object.entries(summaryFte)) {
+    if (s.moneyTotalMismatchCount > 0) {
+      console.warn(
+        `\n⚠ ${code}: a coluna "Investimento Total" da folha não soma todos os anos em ` +
+          `${s.moneyTotalMismatchCount} linha(s),\n` +
+          `  ficando ${s.moneyTotalMismatchAmount.toFixed(2)} € abaixo da soma anual. Foi usada a soma\n` +
+          `  anual, que é o que a própria linha Total da folha usa. A corrigir na origem.`,
+      );
+    }
+    if (s.fteTotalMismatches.length > 0) {
+      console.warn(
+        `\n⚠ ${code}: ${s.fteTotalMismatches.length} linha(s) com FTE anual preenchido mas coluna Total a zero\n` +
+          `  — podem ser trabalho cancelado ou fórmula em falta. Foram importadas com o valor anual:\n` +
+          s.fteTotalMismatches.map((m) => `    - ${m}`).join("\n"),
+      );
+    }
+  }
+
   console.log(
-    `\nNão importados automaticamente (estrutura de sheet distinta, precisam de mapeamento dedicado): ${PENDING_RECONCILIATION_PROJECTS.join(", ")}`,
+    `\nNão importados (excluídos por decisão): ${PENDING_RECONCILIATION_PROJECTS.join(", ")}`,
   );
 
   console.log("\nDone.");

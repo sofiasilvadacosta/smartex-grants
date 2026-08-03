@@ -38,16 +38,35 @@ export async function createBudgetLine(formData: FormData) {
   const projectId = String(formData.get("projectId") ?? "");
   const category = String(formData.get("category") ?? "").trim();
   const trlPhase = String(formData.get("trlPhase") ?? "").trim();
-  const eligibleCost = Number(formData.get("eligibleCost") ?? 0);
+  const activity = String(formData.get("activity") ?? "").trim();
   const financingAmount = Number(formData.get("financingAmount") ?? 0);
 
   if (!projectId || !category) throw new Error("Projeto e categoria são obrigatórios");
+
+  const project = await prisma.project.findUniqueOrThrow({
+    where: { id: projectId },
+    select: { fteRate: true },
+  });
+
+  // On FTE-based projects the eligible cost is derived from the approved FTE
+  // and the project's fixed rate, so it is never typed in by hand.
+  const plannedFteInput = String(formData.get("plannedFte") ?? "").trim();
+  const plannedFte = plannedFteInput ? Number(plannedFteInput) : null;
+  if (plannedFte !== null && (!Number.isFinite(plannedFte) || plannedFte < 0)) {
+    throw new Error("FTE aprovado inválido");
+  }
+  const eligibleCost =
+    project.fteRate && plannedFte !== null
+      ? Number(project.fteRate) * plannedFte
+      : Number(formData.get("eligibleCost") ?? 0);
 
   const created = await prisma.budgetLine.create({
     data: {
       projectId,
       category,
       trlPhase,
+      activity,
+      plannedFte,
       eligibleCost,
       financingAmount,
       createdById: user.id,
@@ -59,7 +78,7 @@ export async function createBudgetLine(formData: FormData) {
       budgetLineId: created.id,
       changeType: "CREATE",
       changedById: user.id,
-      newValue: JSON.stringify({ eligibleCost, financingAmount }),
+      newValue: JSON.stringify({ plannedFte, eligibleCost, financingAmount }),
     },
   });
   revalidatePath(`/projetos/${projectId}`);

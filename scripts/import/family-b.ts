@@ -176,7 +176,6 @@ export async function importFamilyB(workbookPath: string, projectIds: Record<str
   return summary;
 }
 
-// Also referenced by index.ts to warn the user which real, financially-active
-// projects have NO automated import yet (structurally different sheets that
-// need a dedicated look rather than a guessed mapping — see plan Fase 4).
-export const PENDING_RECONCILIATION_PROJECTS = ["RHAQ", "TEXIA", "TEXQUALIS"] as const;
+// RHAQ is deliberately out of scope (decided with the user); Texia and
+// TexQualis are imported by fte-projects.ts.
+export const PENDING_RECONCILIATION_PROJECTS = ["RHAQ"] as const;

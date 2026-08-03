@@ -62,11 +62,23 @@ Imported from `Grants_Approved_Execution_v3.xlsx`:
 - **Invoices only** (no `_Approved`-equivalent sheet identified with
   confidence): Internacionalização, Defect Free — enter their budget lines
   manually via the UI for now.
-- **Not yet imported**: RHAQ, Texia, TexQualis — their sheets use a
-  structurally different layout (FTE-based tables, different rubrica-key
-  columns) that needs a dedicated mapping rather than a guessed one. Their
-  `Project` row is seeded so they're visible in the app; budget lines and
-  execution rows need a follow-up import once that mapping is confirmed.
+- **Texia and TexQualis** (`fte-projects.ts`): budgeted per Atividade × Perfil
+  with a fixed eligible cost per FTE (5189 € and 4432 €) instead of real
+  salaries, so `Project.fteRate` is set and execution is entered in the app as
+  FTE × that rate. Two source quirks handled and reported:
+  - The per-year investment columns are the source of truth, not the sheet's
+    own "Investimento Total" column — in TexQualis that column under-sums by
+    250 851,20 € across 42 rows, while the sheet's Total *row* agrees with the
+    per-year sums.
+  - Three TexQualis rows have yearly FTE filled in but their Total column at
+    zero; they are imported at the yearly value and listed in the run output,
+    since they may be cancelled work.
+
+  Texia's "1 PP Elegível" is recorded per activity (not per profile), so the
+  import creates payment request nº 1 with the submitted total (262 021,15 €)
+  and leaves the per-line split to be entered in the app. TexQualis has no
+  execution in the sheet yet.
+- **Out of scope**: RHAQ (excluded by decision).
 
 Imported from `Smartex_Gestao_Projetos_V4.xlsx`:
 

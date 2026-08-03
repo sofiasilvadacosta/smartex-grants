@@ -4,7 +4,12 @@ import { prisma } from "@/lib/db";
 import type { MatchStatus } from "@/generated/prisma/client";
 import type { MatchCandidate } from "@/lib/reconciliation";
 import { eur, monthLabel } from "@/lib/format";
-import { resolveAllocationMatch, markAllocationNoMatch } from "./actions";
+import {
+  resolveAllocationMatch,
+  markAllocationNoMatch,
+  addFteAllocation,
+  deleteAllocation,
+} from "./actions";
 
 const STATUS_TABS: { key: MatchStatus | "ALL"; label: string }[] = [
   { key: "ALL", label: "Todas" },
@@ -28,11 +33,16 @@ export default async function RhPage({
   const project = await prisma.project.findUnique({ where: { id: projectId } });
   if (!project) notFound();
 
+  const isFteBased = project.fteRate !== null;
+
   const [needsReview, byPerson, budgetLines, totals] = await Promise.all([
     prisma.personnelAllocation.findMany({
       where: { projectId, ...(activeStatus ? { matchStatus: activeStatus } : {}) },
       orderBy: [{ matchStatus: "asc" }, { yearMonth: "desc" }],
-      include: { person: { select: { name: true } }, budgetLine: { select: { category: true } } },
+      include: {
+        person: { select: { name: true } },
+        budgetLine: { select: { category: true, activity: true } },
+      },
       take: 100,
     }),
     prisma.personnelAllocation.groupBy({
@@ -42,17 +52,32 @@ export default async function RhPage({
       _count: { _all: true },
       orderBy: { _sum: { eligibleValue: "desc" } },
     }),
-    prisma.budgetLine.findMany({ where: { projectId }, orderBy: { category: "asc" } }),
+    prisma.budgetLine.findMany({
+      where: { projectId },
+      orderBy: [{ activity: "asc" }, { category: "asc" }],
+    }),
     prisma.personnelAllocation.aggregate({
       where: { projectId },
-      _sum: { eligibleValue: true },
+      _sum: { eligibleValue: true, fte: true },
       _count: { _all: true },
     }),
   ]);
 
-  const pendingCount = await prisma.personnelAllocation.count({
-    where: { projectId, matchStatus: { in: ["UNMATCHED", "AMBIGUOUS"] } },
-  });
+  const [pendingCount, people] = await Promise.all([
+    prisma.personnelAllocation.count({
+      where: { projectId, matchStatus: { in: ["UNMATCHED", "AMBIGUOUS"] } },
+    }),
+    isFteBased
+      ? prisma.person.findMany({
+          where: { active: true },
+          orderBy: { name: "asc" },
+          select: { id: true, name: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const plannedFteTotal = budgetLines.reduce((sum, b) => sum + Number(b.plannedFte ?? 0), 0);
+  const realizedFteTotal = Number(totals._sum.fte ?? 0);
 
   return (
     <div>
@@ -71,8 +96,14 @@ export default async function RhPage({
           </dd>
         </div>
         <div className="rounded-lg border border-gray-200 bg-white p-4">
-          <dt className="text-xs text-gray-500">Linhas pessoa/mês</dt>
-          <dd className="mt-1 text-lg font-semibold text-gray-900">{totals._count._all}</dd>
+          <dt className="text-xs text-gray-500">
+            {isFteBased ? "FTE realizado / aprovado" : "Linhas pessoa/mês"}
+          </dt>
+          <dd className="mt-1 text-lg font-semibold text-gray-900">
+            {isFteBased
+              ? `${realizedFteTotal.toFixed(2)} / ${plannedFteTotal.toFixed(2)}`
+              : totals._count._all}
+          </dd>
         </div>
         <div className="rounded-lg border border-gray-200 bg-white p-4">
           <dt className="text-xs text-gray-500">Por reconciliar</dt>
@@ -83,6 +114,81 @@ export default async function RhPage({
           </dd>
         </div>
       </dl>
+
+      {isFteBased && (
+        <details className="mt-6 rounded-lg border border-gray-200 bg-white p-4">
+          <summary className="cursor-pointer text-sm font-medium text-gray-700">
+            Registar execução por FTE
+          </summary>
+          <p className="mt-2 text-xs text-gray-500">
+            Neste projeto o custo elegível é FTE × {eur(Number(project.fteRate))} (taxa fixa
+            aprovada), por isso a execução é registada em FTE e convertida automaticamente.
+          </p>
+          <form action={addFteAllocation} className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label className="text-sm text-gray-600 sm:col-span-2">
+              Rubrica (atividade / perfil)
+              <select
+                name="budgetLineId"
+                required
+                className="mt-1 w-full rounded border border-gray-300 px-2 py-1"
+              >
+                <option value="">Escolher…</option>
+                {budgetLines.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.activity ? `${b.activity} · ` : ""}
+                    {b.category}
+                    {b.plannedFte ? ` (aprovado ${Number(b.plannedFte).toFixed(2)} FTE)` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm text-gray-600">
+              Mês (AAAA-MM)
+              <input
+                name="yearMonth"
+                required
+                placeholder="2026-03"
+                pattern="\d{4}-\d{2}"
+                className="mt-1 w-full rounded border border-gray-300 px-2 py-1"
+              />
+            </label>
+            <label className="text-sm text-gray-600">
+              FTE realizado
+              <input
+                type="number"
+                step="0.01"
+                min="0.01"
+                name="fte"
+                required
+                className="mt-1 w-full rounded border border-gray-300 px-2 py-1"
+              />
+            </label>
+            <label className="text-sm text-gray-600">
+              Pessoa (opcional)
+              <select name="personId" className="mt-1 w-full rounded border border-gray-300 px-2 py-1">
+                <option value="">—</option>
+                {people.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm text-gray-600">
+              Observações
+              <input name="obs" className="mt-1 w-full rounded border border-gray-300 px-2 py-1" />
+            </label>
+            <div className="sm:col-span-2">
+              <button
+                type="submit"
+                className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
+              >
+                Registar
+              </button>
+            </div>
+          </form>
+        </details>
+      )}
 
       <h2 className="mt-8 text-lg font-medium text-gray-900">Total por pessoa</h2>
       <div className="mt-3 overflow-hidden rounded-lg border border-gray-200 bg-white">
@@ -144,7 +250,9 @@ export default async function RhPage({
                   </p>
                   <p className="text-sm text-gray-500">
                     {row.category} · {monthLabel(row.yearMonth)} ·{" "}
-                    {(Number(row.allocationPercent) * 100).toFixed(0)}% imputação
+                    {row.fte !== null
+                      ? `${Number(row.fte).toFixed(2)} FTE`
+                      : `${(Number(row.allocationPercent) * 100).toFixed(0)}% imputação`}
                   </p>
                 </div>
                 <div className="text-right">
@@ -153,11 +261,27 @@ export default async function RhPage({
                 </div>
               </div>
 
-              {row.budgetLine && (
-                <p className="mt-2 text-sm text-gray-500">
-                  Rubrica: <span className="text-gray-900">{row.budgetLine.category}</span>
-                </p>
-              )}
+              <div className="mt-2 flex items-center justify-between">
+                {row.budgetLine ? (
+                  <p className="text-sm text-gray-500">
+                    Rubrica:{" "}
+                    <span className="text-gray-900">
+                      {row.budgetLine.activity ? `${row.budgetLine.activity} · ` : ""}
+                      {row.budgetLine.category}
+                    </span>
+                  </p>
+                ) : (
+                  <span />
+                )}
+                {row.sourceSheet === "manual" && (
+                  <form action={deleteAllocation}>
+                    <input type="hidden" name="allocationId" value={row.id} />
+                    <button type="submit" className="text-xs text-gray-400 hover:text-red-600">
+                      remover
+                    </button>
+                  </form>
+                )}
+              </div>
 
               {pending && (
                 <div className="mt-3 border-t border-gray-100 pt-3">

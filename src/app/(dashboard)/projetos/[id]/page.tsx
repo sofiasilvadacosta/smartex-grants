@@ -9,7 +9,7 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
   const project = await prisma.project.findUnique({
     where: { id },
     include: {
-      budgetLines: { orderBy: { category: "asc" } },
+      budgetLines: { orderBy: [{ activity: "asc" }, { category: "asc" }] },
       _count: { select: { invoices: true, allocations: true, paymentRequests: true } },
     },
   });
@@ -24,6 +24,7 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
     }),
   ]);
 
+  const isFteBased = project.fteRate !== null;
   const totalEligible = project.budgetLines.reduce((s, b) => s + Number(b.eligibleCost), 0);
   const totalExecuted = project.budgetLines.reduce((s, b) => s + Number(b.executedAmount), 0);
 
@@ -89,8 +90,17 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50">
             <tr>
-              <th className="px-4 py-2 text-left font-medium text-gray-500">Categoria</th>
-              <th className="px-4 py-2 text-left font-medium text-gray-500">Fase TRL</th>
+              {isFteBased && (
+                <th className="px-4 py-2 text-left font-medium text-gray-500">Atividade</th>
+              )}
+              <th className="px-4 py-2 text-left font-medium text-gray-500">
+                {isFteBased ? "Perfil" : "Categoria"}
+              </th>
+              {isFteBased ? (
+                <th className="px-4 py-2 text-right font-medium text-gray-500">FTE aprovado</th>
+              ) : (
+                <th className="px-4 py-2 text-left font-medium text-gray-500">Fase TRL</th>
+              )}
               <th className="px-4 py-2 text-right font-medium text-gray-500">Custo elegível</th>
               <th className="px-4 py-2 text-right font-medium text-gray-500">Financiamento</th>
               <th className="px-4 py-2 text-right font-medium text-gray-500">Executado</th>
@@ -105,8 +115,17 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
               const remaining = eligibleCost - executedAmount;
               return (
                 <tr key={line.id} className="hover:bg-gray-50">
+                  {isFteBased && (
+                    <td className="px-4 py-2 text-gray-500">{line.activity || "—"}</td>
+                  )}
                   <td className="px-4 py-2 text-gray-900">{line.category}</td>
-                  <td className="px-4 py-2 text-gray-500">{line.trlPhase || "—"}</td>
+                  {isFteBased ? (
+                    <td className="px-4 py-2 text-right text-gray-500">
+                      {line.plannedFte ? Number(line.plannedFte).toFixed(2) : "—"}
+                    </td>
+                  ) : (
+                    <td className="px-4 py-2 text-gray-500">{line.trlPhase || "—"}</td>
+                  )}
                   <td className="px-4 py-2 text-right text-gray-900">{eur(eligibleCost)}</td>
                   <td className="px-4 py-2 text-right text-gray-500">{eur(Number(line.financingAmount))}</td>
                   <td className="px-4 py-2 text-right text-gray-900">{eur(executedAmount)}</td>
@@ -163,7 +182,7 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
             })}
             {project.budgetLines.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-4 py-6 text-center text-gray-400">
+                <td colSpan={isFteBased ? 8 : 7} className="px-4 py-6 text-center text-gray-400">
                   Sem rubricas ainda.
                 </td>
               </tr>
@@ -176,24 +195,53 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
         <summary className="cursor-pointer text-sm font-medium text-gray-700">Nova rubrica</summary>
         <form action={createBudgetLine} className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <input type="hidden" name="projectId" value={project.id} />
+          {isFteBased && (
+            <label className="text-sm text-gray-600">
+              Atividade
+              <input
+                name="activity"
+                placeholder="ex: 3"
+                className="mt-1 w-full rounded border border-gray-300 px-2 py-1"
+              />
+            </label>
+          )}
           <label className="text-sm text-gray-600">
-            Categoria
+            {isFteBased ? "Perfil" : "Categoria"}
             <input name="category" required className="mt-1 w-full rounded border border-gray-300 px-2 py-1" />
           </label>
-          <label className="text-sm text-gray-600">
-            Fase TRL (opcional)
-            <input name="trlPhase" placeholder="ex: 3-4" className="mt-1 w-full rounded border border-gray-300 px-2 py-1" />
-          </label>
-          <label className="text-sm text-gray-600">
-            Custo elegível
-            <input
-              type="number"
-              step="0.01"
-              name="eligibleCost"
-              required
-              className="mt-1 w-full rounded border border-gray-300 px-2 py-1"
-            />
-          </label>
+          {isFteBased ? (
+            <label className="text-sm text-gray-600">
+              FTE aprovado
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                name="plannedFte"
+                required
+                className="mt-1 w-full rounded border border-gray-300 px-2 py-1"
+              />
+              <span className="mt-1 block text-xs text-gray-400">
+                Custo elegível = FTE × {eur(Number(project.fteRate))}
+              </span>
+            </label>
+          ) : (
+            <>
+              <label className="text-sm text-gray-600">
+                Fase TRL (opcional)
+                <input name="trlPhase" placeholder="ex: 3-4" className="mt-1 w-full rounded border border-gray-300 px-2 py-1" />
+              </label>
+              <label className="text-sm text-gray-600">
+                Custo elegível
+                <input
+                  type="number"
+                  step="0.01"
+                  name="eligibleCost"
+                  required
+                  className="mt-1 w-full rounded border border-gray-300 px-2 py-1"
+                />
+              </label>
+            </>
+          )}
           <label className="text-sm text-gray-600">
             Financiamento
             <input
