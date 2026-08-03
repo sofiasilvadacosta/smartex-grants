@@ -216,24 +216,12 @@ export async function importFteProjects(
       eligibleCostTotal += investmentTotal;
     }
 
-    // Register the 1st payment request with the amount the sheet says was
-    // submitted. It is recorded per activity, not per profile, so the request
-    // total is trustworthy while a per-budget-line split is not — the
-    // execution rows themselves are entered in the app from here on.
-    if (firstPpSubmitted != null) {
-      await prisma.paymentRequest.upsert({
-        where: { projectId_ppNumber: { projectId, ppNumber: "1" } },
-        update: { requestedAmount: firstPpSubmitted },
-        create: {
-          projectId,
-          ppNumber: "1",
-          requestedAmount: firstPpSubmitted,
-          notes:
-            `Total submetido lido da coluna "1 PP Elegível" da folha ${map.sheetName} ` +
-            `(registada por atividade, não por perfil).`,
-        },
-      });
-    }
+    // The sheet's "1 PP Elegível" column records what was submitted but not
+    // which request submitted it — the portal's own form shows Texia's
+    // personnel was declared in request nº 3, not nº 1. The requests are
+    // therefore derived from the Nº PP the execution rows carry
+    // (lib/sync-payment-requests.ts); only the total is kept here, to check
+    // against what those rows add up to.
 
     summary[map.projectCode] = {
       budgetLinesCreated: created,

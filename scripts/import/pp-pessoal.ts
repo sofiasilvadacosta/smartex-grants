@@ -34,6 +34,8 @@ export interface PessoalImportSummary {
   byActivity: Record<string, number>;
   // Activities present in the execution rows with no approved personnel line.
   activitiesWithoutBudgetLine: string[];
+  // Rows narrowed by the person named in the rubrica instead of by activity.
+  ambiguousByPerson: number;
 }
 
 function nameKey(name: string): string {
@@ -57,6 +59,10 @@ function cleanPersonName(raw: string): string {
 }
 
 const PERSONNEL_CATEGORY = "Pessoal técnico do beneficiário (a)";
+
+function fold(text: string): string {
+  return text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
 
 interface ActivityLine {
   id: string;
@@ -113,10 +119,9 @@ export async function importPessoalFromPp(
 
   // Approved personnel lines grouped by activity; several per activity means
   // the funder split that activity into annual tranches.
-  const linesByActivity = new Map<string, ActivityLine[]>();
-  if (activities) {
-    const budgetLines = await prisma.budgetLine.findMany({
-      where: { projectId, category: PERSONNEL_CATEGORY, activity: { not: "" } },
+  const allLines = (
+    await prisma.budgetLine.findMany({
+      where: { projectId },
       select: {
         id: true,
         activity: true,
@@ -127,20 +132,28 @@ export async function importPessoalFromPp(
         executedAmount: true,
       },
       orderBy: { orderNumber: "asc" },
-    });
-    for (const line of budgetLines) {
-      const list = linesByActivity.get(line.activity) ?? [];
-      list.push({
-        id: line.id,
-        category: line.category,
-        trlPhase: line.trlPhase,
-        orderNumber: line.orderNumber,
-        eligibleCost: Number(line.eligibleCost),
-        executedAmount: Number(line.executedAmount),
-      });
-      linesByActivity.set(line.activity, list);
-    }
+    })
+  ).map((line) => ({
+    activity: line.activity,
+    id: line.id,
+    category: line.category,
+    trlPhase: line.trlPhase,
+    orderNumber: line.orderNumber,
+    eligibleCost: Number(line.eligibleCost),
+    executedAmount: Number(line.executedAmount),
+  }));
+
+  const linesByActivity = new Map<string, ActivityLine[]>();
+  for (const line of allLines) {
+    if (line.category !== PERSONNEL_CATEGORY || !line.activity) continue;
+    linesByActivity.set(line.activity, [...(linesByActivity.get(line.activity) ?? []), line]);
   }
+
+  // TexQualis budgets personnel per named person rather than per abstract
+  // profile ("Rui Ferreira, Engenheiro Mecânico"), so when the activity is
+  // unknown the person's own name still narrows 44 rubricas down to the handful
+  // budgeted for them.
+  const foldedCategories = allLines.map((line) => ({ line, folded: fold(line.category) }));
 
   const summary: PessoalImportSummary = {
     processed: 0,
@@ -155,6 +168,7 @@ export async function importPessoalFromPp(
     ambiguousWithinActivity: 0,
     byActivity: {},
     activitiesWithoutBudgetLine: [],
+    ambiguousByPerson: 0,
   };
   const unresolved = new Set<string>();
   const activitiesMissingLine = new Set<string>();
@@ -217,6 +231,19 @@ export async function importPessoalFromPp(
         amount,
       ) as unknown as Prisma.InputJsonValue;
       summary.ambiguousWithinActivity++;
+    } else {
+      const parts = fold(displayName).split(/\s+/).filter(Boolean);
+      const named =
+        parts.length >= 2
+          ? foldedCategories
+              .filter((c) => c.folded.includes(parts[0]) && c.folded.includes(parts[parts.length - 1]))
+              .map((c) => c.line)
+          : [];
+      if (named.length > 0) {
+        matchStatus = "AMBIGUOUS";
+        matchCandidates = candidatesFor(named, amount) as unknown as Prisma.InputJsonValue;
+        summary.ambiguousByPerson++;
+      }
     }
 
     const data = {

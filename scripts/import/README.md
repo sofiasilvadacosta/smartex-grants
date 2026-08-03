@@ -112,33 +112,51 @@ last. Personnel is declared per request as one aggregate row per TRL phase and
 cannot be split back into the monthly allocations held here, so it is recorded
 in the request's notes instead of linked.
 
-## Approved budget from a payment-request PDF (Defect Free)
+## Approved budget from a payment-request PDF
 
-Defect Free has no `_Approved` sheet — its approved budget only exists in the
-funder's payment-request form ("Quadro de Investimentos", SGO 2030 / Norte
-2030). Convert that PDF to CSV once, then the normal import reads it:
+Defect Free, Internacionalização, Texia and TexQualis have no `_Approved`
+sheet — their approved budget only exists in the funder's payment-request form
+("Quadro de Investimentos", SGO 2030). Convert that PDF to CSV once, then the
+normal import reads it:
 
 ```bash
 pip install pdfplumber
-python3 scripts/import/extract-pp-pdf.py \
+python3 scripts/import/extract-pp-quadro.py \
   Pedido_de_Pagamento_Defect_Free.pdf \
   imports/DefectFree_Quadro_Investimentos.csv
 ```
 
-The extractor cross-checks its row sums against the document's own Total row
-and refuses to write the CSV if they disagree, so a mis-parse can't quietly
-become budget data. It produces one row per **Nº ordem** — the unit the funder
-approves and reports against — with the activity, official cost classification
-(a/c/e/f/h/i), year, approved amount and the amounts declared as executed.
+The portal prints the table as a web page, so the extractor recovers rows by
+grouping words into visual lines and placing each word in a column using the
+header's own x positions. It cannot hard-code those positions: the projects
+differ (Texia has no AJUSTADO column, Defect Free has two REALIZADA columns and
+a two-line header, and the x positions move between forms). Nor can one
+geometric rule place every column — money and percentages are right-aligned,
+designation and classification left-aligned, the small numeric columns centred —
+so right-aligned columns are matched on their right edge and "ATIV."/"ESTAB."
+only accept a word that is actually a number.
+
+Row sums are checked against the document's own total row and the script writes
+nothing if they disagree. One caveat it reports rather than hides: the portal's
+print clips the last digit of the rightmost column on some forms (all three of
+the newer ones), and a value clipped that way is written **empty** instead of as
+a wrong number — so `declaredExecuted` is simply absent for those projects
+rather than silently 10× too small.
 
 `pp-quadro.ts` then creates one budget line per Nº ordem and links invoices to
 their budget line **exactly by Nº ordem** (no text matching), since the PP
-sheets carry the same number. It also stores the funder's own declared execution
-per line in `BudgetLine.declaredExecuted`, which the project page compares
-against the execution actually registered here — see "Verifying against the
-portal" below. Budget lines whose Nº ordem is no longer in the CSV are reported
-rather than deleted — they may already carry execution or have been added by
-hand.
+sheets carry the same number. The line is looked up by Nº ordem alone: it
+identifies the line on its own, and keying on activity and classification too
+made a corrected re-read create a second line for the same approved budget.
+Budget lines whose Nº ordem is no longer in the CSV are reported rather than
+deleted — they may already carry execution or have been added by hand.
+
+Texia and TexQualis deliberately do **not** use this path for their budget. The
+funder approves them as one line per activity, while the planning spreadsheet
+breaks the same total down by activity × profile, which is what the team plans
+against; importing both would double the budget. Their quadro PDFs are still
+worth keeping for the approved totals (890 432,40 € and 698 040,00 €, both
+matching what the spreadsheet gives).
 
 ### Movements and personnel from the portal's own exports
 
@@ -194,6 +212,22 @@ attachment). The figures are typed into `scripts/import/index.ts` rather than
 parsed: these are prose documents with no fixed layout, a few per year, and a
 number read from a mis-parsed sentence would be worse than one nobody typed.
 
+### Texia and TexQualis execution
+
+Neither project has invoices; their whole execution so far is the personnel
+declared in the portal's form, extracted with the same `extract-pp-pessoas.py`
+as Defect Free (Texia 262 021,15 € in request 3, TexQualis 128 208,90 € in
+request 2, both matching the documents' own totals).
+
+Those rows import unreconciled: the form gives no activity, and unlike Defect
+Free there is no per-technician activity export for them yet. TexQualis gets
+part of the way anyway — it budgets personnel per named person ("Rui Ferreira,
+Engenheiro Mecânico") rather than per abstract profile, so the person on the row
+narrows 44 rubricas to the handful budgeted for them; that covers 21 of its 79
+rows. The other 58 are people with no personnel line in this project at all,
+which is worth looking at on its own: several budgeted entries are still
+"A contratar".
+
 ### Payment requests are derived, never assumed
 
 `lib/sync-payment-requests.ts` runs last and builds the `PaymentRequest` rows
@@ -201,7 +235,9 @@ from the "Nº PP" the execution rows themselves carry, setting each request's
 submitted amount to the sum of its rows and deleting any request left with no
 rows, no decision and no attachment. Defect Free's requests are 3 and 4 — an
 earlier version of this import assumed "2" from the working spreadsheet, and the
-portal export disproved it.
+portal export disproved it. The same correction applies to Texia: the planning
+sheet's "1 PP Elegível" column named no request, and the portal's form shows
+that money was declared in request 3.
 
 ### Verifying against the portal
 

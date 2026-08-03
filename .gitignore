@@ -51,3 +51,6 @@ skills-lock.json
 # source spreadsheets for the one-time historical import — contain salaries,
 # supplier tax IDs and invoice data; never commit, place your own copies here
 /imports/
+
+# Python bytecode from the PDF extractors
+__pycache__/

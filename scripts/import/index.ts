@@ -160,16 +160,24 @@ async function main() {
   }
 
   console.log("\nImporting Quadro de Investimentos from payment-request PDFs...");
-  const quadroSummary = await importQuadroInvestimentos(
-    path.join(IMPORTS_DIR, "DefectFree_Quadro_Investimentos.csv"),
-    projectIds.DEFECT_FREE,
-  );
-  if (quadroSummary) {
-    console.log("DEFECT_FREE:", JSON.stringify(quadroSummary, null, 2));
-  } else {
-    console.log(
-      "  (sem DefectFree_Quadro_Investimentos.csv em imports/ — ver scripts/import/README.md)",
+  // Every project whose approved budget only exists in the funder's own form.
+  // Texia and TexQualis are absent on purpose: their budget comes from the
+  // planning spreadsheet broken down by profile, which is finer than the
+  // funder's one-line-per-activity form and adds up to the same total.
+  const QUADRO_PROJECTS: [string, string][] = [
+    ["DEFECT_FREE", "DefectFree_Quadro_Investimentos.csv"],
+    ["INTERNACIONALIZACAO", "Internacionalizacao_Quadro_Investimentos.csv"],
+  ];
+  for (const [code, file] of QUADRO_PROJECTS) {
+    const summary = await importQuadroInvestimentos(
+      path.join(IMPORTS_DIR, file),
+      projectIds[code],
     );
+    if (summary) {
+      console.log(`${code}:`, JSON.stringify(summary, null, 2));
+    } else {
+      console.log(`  (sem ${file} em imports/ — ver scripts/import/README.md)`);
+    }
   }
 
   const movimentosSummary = await importMovimentos(
@@ -237,6 +245,25 @@ async function main() {
     },
   ]);
   console.log("\nDEFECT_FREE decisões:", JSON.stringify(decisoes, null, 2));
+
+  // Texia and TexQualis have no invoices; their whole execution so far is the
+  // personnel declared in the portal's payment-request form.
+  for (const [code, file] of [
+    ["TEXIA", "Texia_Pessoal.csv"],
+    ["TEXQUALIS", "TexQualis_Pessoal.csv"],
+  ] as const) {
+    const summary = await importPessoalFromPp(
+      path.join(IMPORTS_DIR, file),
+      // No per-technician activity export for these two yet, so every row
+      // imports unreconciled; see scripts/import/README.md.
+      path.join(IMPORTS_DIR, file.replace("_Pessoal.csv", "_Pessoal_Atividades.txt")),
+      projectIds[code],
+    );
+    if (!summary) continue;
+    console.log(`\n${code} pessoal:`, JSON.stringify(summary, null, 2));
+    const sync = await syncPaymentRequestsFromExecution(projectIds[code]);
+    console.log(`${code} pedidos de pagamento:`, JSON.stringify(sync));
+  }
 
   const texpactPedidos = await importTexpactPedidos(
     path.join(IMPORTS_DIR, "TexPact_Pedidos_Pagamento.xlsx"),

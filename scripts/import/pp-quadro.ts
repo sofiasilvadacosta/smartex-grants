@@ -1,10 +1,11 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { prisma } from "../../src/lib/db";
 import { recomputeBudgetLineExecuted } from "../../src/lib/reconciliation";
+import { readCsv } from "./lib/csv";
 
 // The approved budget for projects whose "Quadro de Investimentos" only exists
 // in the funder's payment-request PDF, converted to CSV by
-// scripts/import/extract-pp-pdf.py. One budget line per "Nº ordem" — the unit
+// scripts/import/extract-pp-quadro.py. One budget line per "Nº ordem" — the unit
 // the funder itself approves and reports against.
 interface QuadroRow {
   orderNumber: string;
@@ -12,8 +13,10 @@ interface QuadroRow {
   classification: string;
   endDate: string;
   approved: number;
-  declaredExecuted: number;
-  declaredIndirect: number;
+  // Null when the portal's print clipped the value's last digit — see
+  // extract-pp-quadro.py. A clipped figure must not become a comparison
+  // baseline, so it is absent rather than approximated.
+  declaredExecuted: number | null;
 }
 
 export interface QuadroImportSummary {
@@ -23,40 +26,29 @@ export interface QuadroImportSummary {
   declaredExecutedTotal: number;
   invoicesLinkedByOrderNumber: number;
   invoicesStillUnmatched: number;
+  // Lines whose declared execution the PDF clipped and so could not be read.
+  declaredExecutedUnreadable: number;
   // Budget lines carrying an order number the current CSV no longer contains.
   // Reported rather than deleted: they may already have execution linked or be
   // a line entered by hand, so removing them is a human decision.
   staleOrderNumbers: string[];
 }
 
-function parseCsv(path: string): QuadroRow[] {
-  const [header, ...lines] = readFileSync(path, "utf8").trim().split(/\r?\n/);
-  const columns = header.split(",");
-  return lines.map((line) => {
-    // Classification labels contain commas, so respect quoting.
-    const cells: string[] = [];
-    let current = "";
-    let inQuotes = false;
-    for (const char of line) {
-      if (char === '"') inQuotes = !inQuotes;
-      else if (char === "," && !inQuotes) {
-        cells.push(current);
-        current = "";
-      } else current += char;
-    }
-    cells.push(current);
+function optionalNumber(text: string): number | null {
+  if (!text.trim()) return null;
+  const value = Number(text);
+  return Number.isFinite(value) ? value : null;
+}
 
-    const row = Object.fromEntries(columns.map((c, i) => [c, cells[i] ?? ""]));
-    return {
-      orderNumber: row.orderNumber,
-      activity: row.activity,
-      classification: row.classification,
-      endDate: row.endDate,
-      approved: Number(row.approved),
-      declaredExecuted: Number(row.declaredExecuted),
-      declaredIndirect: Number(row.declaredIndirect),
-    };
-  });
+function parseCsv(path: string): QuadroRow[] {
+  return readCsv(path).map((row) => ({
+    orderNumber: row.orderNumber,
+    activity: row.activity,
+    classification: row.classification,
+    endDate: row.endDate,
+    approved: Number(row.approved),
+    declaredExecuted: optionalNumber(row.declaredExecuted ?? ""),
+  }));
 }
 
 export async function importQuadroInvestimentos(
@@ -73,17 +65,25 @@ export async function importQuadroInvestimentos(
     // The year distinguishes the funder's annual tranches of the same
     // activity/classification pair, so it belongs in the unique key.
     const trlPhase = row.endDate ? row.endDate.slice(0, 4) : "";
-    const existing = await prisma.budgetLine.findUnique({
-      where: {
-        projectId_activity_category_trlPhase_orderNumber: {
-          projectId,
-          activity: row.activity,
-          category: row.classification,
-          trlPhase,
-          orderNumber: row.orderNumber,
-        },
-      },
-    });
+    // The funder's "Nº ordem" identifies the line on its own, so look it up by
+    // that alone. Keying on activity and classification too would make a
+    // re-read that corrects either of them create a second line for the same
+    // approved budget instead of updating the existing one.
+    const existing = row.orderNumber
+      ? await prisma.budgetLine.findFirst({
+          where: { projectId, orderNumber: row.orderNumber },
+        })
+      : await prisma.budgetLine.findUnique({
+          where: {
+            projectId_activity_category_trlPhase_orderNumber: {
+              projectId,
+              activity: row.activity,
+              category: row.classification,
+              trlPhase,
+              orderNumber: "",
+            },
+          },
+        });
 
     if (existing) {
       if (Number(existing.eligibleCost) !== row.approved) {
@@ -101,6 +101,9 @@ export async function importQuadroInvestimentos(
       await prisma.budgetLine.update({
         where: { id: existing.id },
         data: {
+          activity: row.activity,
+          category: row.classification,
+          trlPhase,
           orderNumber: row.orderNumber,
           eligibleCost: row.approved,
           declaredExecuted: row.declaredExecuted,
@@ -185,7 +188,9 @@ export async function importQuadroInvestimentos(
     budgetLinesCreated: created,
     budgetLinesUpdated: updated,
     approvedTotal: Math.round(rows.reduce((s, r) => s + r.approved, 0) * 100) / 100,
-    declaredExecutedTotal: Math.round(rows.reduce((s, r) => s + r.declaredExecuted, 0) * 100) / 100,
+    declaredExecutedTotal:
+      Math.round(rows.reduce((s, r) => s + (r.declaredExecuted ?? 0), 0) * 100) / 100,
+    declaredExecutedUnreadable: rows.filter((r) => r.declaredExecuted === null).length,
     invoicesLinkedByOrderNumber: linked,
     invoicesStillUnmatched: stillUnmatched,
     staleOrderNumbers,
