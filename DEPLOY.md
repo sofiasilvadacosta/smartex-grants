@@ -73,9 +73,9 @@ Em **Settings → Environment Variables**, define para **Production**:
 > diferente. Partilhar o `DATABASE_URL` com produção significa que qualquer
 > branch escreve nos dados reais.
 
-O repositório só tem um branch (`claude/funded-projects-webapp-i9qjju`), que é
-por isso o branch de produção. Se preferires um `main`, muda-o em **Settings →
-Git → Production Branch** depois de o criares.
+O branch de produção é o `main`. O branch de trabalho
+(`claude/funded-projects-webapp-i9qjju`) aponta para o mesmo commit; quando
+divergirem, faz merge para `main` para publicar.
 
 Faz **Deploy**. O build corre `prisma generate` sozinho (o cliente gerado não
 está no repositório) e não precisa da base de dados para compilar.
