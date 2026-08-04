@@ -187,20 +187,62 @@ que os totais são os esperados — estão listados em `scripts/import/README.md
 
 ## 6. Criar as tabelas e carregar os dados
 
-Isto corre a partir da tua máquina, apontando à base de dados de produção. No
-repositório, com os ficheiros de origem em `imports/`:
+Isto corre a partir da tua máquina, apontando à base de dados de produção. Precisas
+de ter instalado o [Node.js](https://nodejs.org) (versão LTS) e o
+[Git](https://git-scm.com/downloads), e do repositório clonado:
 
 ```bash
-# Aponta à produção só para estes comandos, sem mexer no teu .env
-export DATABASE_URL="<a connection string, tirada do painel do Neon>"
+git clone https://github.com/sofiasilvadacosta/smartex-grants.git
+cd smartex-grants
+npm install
+```
 
+Cria um ficheiro `.env` na raiz do repositório com uma linha só — a connection
+string do painel do Neon:
+
+```
+DATABASE_URL="postgresql://..."
+```
+
+O `.env` é gitignored, não vai para o repositório. Vale a pena apagá-lo depois do
+import: é uma credencial de produção no teu disco.
+
+```bash
 npm run db:deploy   # cria as tabelas (prisma migrate deploy)
-npm run db:import   # carrega projetos, orçamentos, faturas, RH e pedidos
+npm run db:import   # carrega projetos, orçamentos, faturas, RH, pedidos e recebimentos
+```
+
+O `npm run db:deploy` é **obrigatório antes do primeiro login**: o Auth.js grava o
+utilizador e a sessão na base de dados, e sem tabelas o login falha.
+
+Em alternativa ao `.env`, podes definir a variável só para a sessão do terminal.
+Em macOS ou Linux:
+
+```bash
+export DATABASE_URL="postgresql://..."
+```
+
+Em Windows, no PowerShell (o `export` não existe lá):
+
+```powershell
+$env:DATABASE_URL = "postgresql://..."
 ```
 
 O import é repetível: podes voltar a corrê-lo sempre que atualizares os
 ficheiros de origem. Nunca duplica linhas e **nunca desfaz uma rubrica que
 alguém já tenha reconciliado na app**.
+
+### O que carrega com o que tens
+
+O import salta em silêncio os ficheiros que não encontrar, e isso é útil: dá para
+começar só com os dois livros de Excel e acrescentar o resto depois.
+
+Só com `Grants_Approved_Execution_v3.xlsx` e `Smartex_Gestao_Projetos_V4.xlsx`
+entram os orçamentos e a execução de Produtech e TexP@ct, as pessoas e o
+calendário, os orçamentos de Texia e TexQualis, as faturas da Internacionalização
+e todos os recebimentos. Falta, sem os ficheiros derivados dos PDFs: o orçamento
+do Defect Free e da Internacionalização, a execução do Defect Free, Texia e
+TexQualis, e as decisões do financiador.
 
 ## 7. Primeiro acesso
 
