@@ -70,28 +70,57 @@ export default async function TimesheetPage({
         úteis (exclui fins de semana e feriados). ETI imputado = horas ÷ horas potenciais.
       </p>
 
-      <form method="get" className="mt-4 flex items-end gap-3">
-        <label className="text-sm text-gray-600">
-          Ano
-          <select
-            name="ano"
-            defaultValue={String(year)}
-            className="mt-1 block rounded border border-gray-300 px-2 py-1"
+      <div className="mt-4 flex flex-wrap items-end justify-between gap-4">
+        <form method="get" className="flex items-end gap-3">
+          <label className="text-sm text-gray-600">
+            Ano
+            <select
+              name="ano"
+              defaultValue={String(year)}
+              className="mt-1 block rounded border border-gray-300 px-2 py-1"
+            >
+              {years.map((y) => (
+                <option key={y} value={y}>
+                  {y}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="submit"
+            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
           >
-            {years.map((y) => (
-              <option key={y} value={y}>
-                {y}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button
-          type="submit"
-          className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-        >
-          Ver
-        </button>
-      </form>
+            Ver
+          </button>
+        </form>
+
+        {timesheet.projects.length > 0 && (
+          <form method="get" action={`/api/timesheets/${timesheet.personId}`} className="flex items-end gap-2">
+            {/* One form per project, as the funder's own file is: the project it
+                is about fills the first block and the others get a named line. */}
+            <label className="text-sm text-gray-600">
+              Exportar mapa do projeto
+              <select
+                name="projeto"
+                className="mt-1 block rounded border border-gray-300 px-2 py-1"
+              >
+                {timesheet.projects.map((block) => (
+                  <option key={block.projectId} value={block.projectId}>
+                    {block.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <input type="hidden" name="anos" value={`${year - 1},${year},${year + 1}`} />
+            <button
+              type="submit"
+              className="rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
+            >
+              Exportar Excel
+            </button>
+          </form>
+        )}
+      </div>
 
       <div
         className={`mt-6 rounded-lg border p-4 text-sm ${

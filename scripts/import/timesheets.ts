@@ -3,6 +3,7 @@ import path from "node:path";
 import type ExcelJS from "exceljs";
 import { prisma } from "../../src/lib/db";
 import { asNumber, asString, loadWorkbook } from "./lib/workbook";
+import { activityNumber } from "../../src/lib/timesheet";
 
 /**
  * Reads the funder's "Mapa de horas/ETI" workbooks (COMPETE2030 layout).
@@ -59,6 +60,13 @@ export interface TimesheetImportSummary {
    * ETI on that sheet wrong, and it is the sheet that has to be fixed.
    */
   calendarMismatches: string[];
+  /**
+   * Rows whose activity text does not match the project's own approved activity
+   * carrying the same number — the sign of a form copied from another project.
+   * The hours still reach the right budget line, because the link goes through the
+   * number; it is the label that would be wrong on a submitted form.
+   */
+  activityLabelMismatches: string[];
   problems: string[];
 }
 
@@ -131,6 +139,7 @@ export async function importTimesheet(
     otherActivityMonths: 0,
     unbalancedMonths: [],
     calendarMismatches: [],
+    activityLabelMismatches: [],
     problems: [],
   };
 
@@ -182,6 +191,24 @@ export async function importTimesheet(
     return summary;
   }
 
+  // The project's own approved activities, by the funder's activity number, so a
+  // label copied from another project's form can be spotted.
+  const approvedByNumber = new Map<number, string>();
+  for (const line of await prisma.budgetLine.findMany({
+    where: { projectId, activity: { not: "" } },
+    select: { activity: true },
+    distinct: ["activity"],
+  })) {
+    const number = activityNumber(line.activity);
+    if (number !== null) approvedByNumber.set(number, line.activity);
+  }
+  const seenMismatch = new Set<string>();
+  // Activity number -> label -> the sheets that used it. Two labels for one
+  // number is a contradiction inside the workbook itself, which needs no list of
+  // approved names to detect — and is what catches a year copied from another
+  // project's form when the approved activities are stored as bare numbers.
+  const labelsByNumber = new Map<number, Map<string, string[]>>();
+
   for (const sheet of sheets) {
     const months = new Map<number, string>();
     for (let col = FIRST_MONTH_COL; col <= LAST_MONTH_COL; col++) {
@@ -216,6 +243,32 @@ export async function importTimesheet(
     for (let row = FIRST_ACTIVITY_ROW; row <= LAST_ACTIVITY_ROW; row++) {
       const activity = asString(sheet.getRow(row).getCell(COL_ACTIVITY).value)?.trim();
       if (!activity || /^sub-?total/i.test(activity)) continue;
+
+      // Compare the label against the approved activity of the same number. Only
+      // reported where the approved name is a real name rather than the bare
+      // number some projects store, which carries nothing to compare against.
+      const number = activityNumber(activity);
+      if (number !== null) {
+        const byLabel = labelsByNumber.get(number) ?? new Map<string, string[]>();
+        const sheets = byLabel.get(activity) ?? [];
+        if (!sheets.includes(sheet.name)) sheets.push(sheet.name);
+        byLabel.set(activity, sheets);
+        labelsByNumber.set(number, byLabel);
+      }
+
+      const approved = number === null ? undefined : approvedByNumber.get(number);
+      if (
+        approved !== undefined &&
+        activityNumber(approved) !== null &&
+        approved.replace(/^\s*\d+\s*[-–]?\s*/, "").trim().length > 0 &&
+        approved.trim() !== activity &&
+        !seenMismatch.has(`${sheet.name}|${activity}`)
+      ) {
+        seenMismatch.add(`${sheet.name}|${activity}`);
+        summary.activityLabelMismatches.push(
+          `${sheet.name}, atividade ${number}: folha diz "${activity}" — o aprovado é "${approved}"`,
+        );
+      }
 
       let rowHadHours = false;
       for (const [col, yearMonth] of months) {
@@ -302,6 +355,16 @@ export async function importTimesheet(
         );
       }
     }
+  }
+
+  for (const [number, byLabel] of [...labelsByNumber.entries()].sort((a, b) => a[0] - b[0])) {
+    if (byLabel.size < 2) continue;
+    summary.activityLabelMismatches.push(
+      `atividade ${number} tem nomes diferentes entre folhas do mesmo ficheiro: ` +
+        [...byLabel.entries()]
+          .map(([label, sheets]) => `${sheets.join("/")} diz "${label}"`)
+          .join("; "),
+    );
   }
 
   return summary;

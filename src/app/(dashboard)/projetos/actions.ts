@@ -33,6 +33,28 @@ export async function createProject(formData: FormData) {
   revalidatePath("/projetos");
 }
 
+// The two fields the funder's forms identify a project by. Kept editable rather
+// than seeded, because guessing a programme wrong puts a wrong programme on a
+// submitted form — worse than a blank one somebody has to fill in.
+export async function updateProjectIdentity(formData: FormData) {
+  const user = await requireUser();
+  const id = String(formData.get("id") ?? "");
+  if (!id) throw new Error("Projeto em falta");
+
+  const fundingProgram = String(formData.get("fundingProgram") ?? "").trim() || null;
+  const externalNumber = String(formData.get("externalNumber") ?? "").trim() || null;
+  if (externalNumber && !/^[\w./-]{1,32}$/.test(externalNumber)) {
+    throw new Error("Número do projeto inválido");
+  }
+
+  await prisma.project.update({
+    where: { id },
+    data: { fundingProgram, externalNumber, updatedById: user.id },
+  });
+  revalidatePath(`/projetos/${id}`);
+  revalidatePath("/projetos");
+}
+
 // Take a project out of the platform's scope, or bring it back. Excluded
 // projects keep every row they have — this only stops them being counted and
 // shown as if they were being managed here.

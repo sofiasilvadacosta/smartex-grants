@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import { declaredVsExecuted } from "@/lib/declared-vs-executed";
 import { projectReceipts } from "@/lib/receipts";
 import { budgetLineLabel, eur } from "@/lib/format";
-import { createBudgetLine, updateBudgetLine } from "../actions";
+import { createBudgetLine, updateBudgetLine, updateProjectIdentity } from "../actions";
 
 export default async function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -68,6 +68,34 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
             {project.code} · {project.startDate?.toLocaleDateString("pt-PT")} –{" "}
             {project.endDate?.toLocaleDateString("pt-PT")}
           </p>
+          <form
+            action={updateProjectIdentity}
+            className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500"
+          >
+            <input type="hidden" name="id" value={project.id} />
+            <label>
+              Programa
+              <input
+                name="fundingProgram"
+                defaultValue={project.fundingProgram ?? ""}
+                placeholder="COMPETE2030"
+                className="ml-1 w-36 rounded border border-gray-300 px-1 py-0.5"
+              />
+            </label>
+            <label>
+              Nº do projeto no financiador
+              <input
+                name="externalNumber"
+                defaultValue={project.externalNumber ?? ""}
+                placeholder="20783"
+                className="ml-1 w-24 rounded border border-gray-300 px-1 py-0.5"
+              />
+            </label>
+            <button type="submit" className="underline hover:text-gray-900">
+              guardar
+            </button>
+            <span className="text-gray-400">— usados no cabeçalho do mapa de horas</span>
+          </form>
         </div>
         <div className="flex flex-wrap gap-2">
           <Link

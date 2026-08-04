@@ -103,6 +103,10 @@ model Project {
   code           String        @unique
   name           String
   fundingProgram String?
+  // The funder's own number for the project ("Projeto 20783"), which its forms
+  // identify it by. Needed to fill in the timesheet, and to recognise which
+  // project a timesheet workbook belongs to on import.
+  externalNumber String?
   startDate      DateTime?
   endDate        DateTime?
   status         ProjectStatus @default(ACTIVE)

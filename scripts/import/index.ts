@@ -353,6 +353,15 @@ async function main() {
             summary.calendarMismatches.map((m) => `    - ${m}`).join("\n"),
         );
       }
+      if (summary.activityLabelMismatches.length > 0) {
+        console.warn(
+          `\n⚠ ${path.basename(file)}: ${summary.activityLabelMismatches.length} atividade(s) com\n` +
+            `  nome que não é o do projeto — sinal de um formulário copiado de outro projeto. As\n` +
+            `  horas ficam na rubrica certa (a ligação é pelo número), mas o nome iria errado no\n` +
+            `  mapa submetido:\n` +
+            summary.activityLabelMismatches.map((m) => `    - ${m}`).join("\n"),
+        );
+      }
       if (summary.unbalancedMonths.length > 0) {
         console.warn(
           `\n⚠ ${path.basename(file)}: ${summary.unbalancedMonths.length} mês(es) em que a\n` +
