@@ -16,6 +16,7 @@ import { importDeslocacoes } from "./pp-deslocacoes";
 import { importDecisoes } from "./pp-decisoes";
 import { importTexpactPedidos } from "./texpact-pedidos";
 import { importReceipts } from "./receipts";
+import { findTimesheetFiles, importTimesheet } from "./timesheets";
 import { syncPaymentRequestsFromExecution } from "./lib/sync-payment-requests";
 
 const IMPORTS_DIR = path.resolve(__dirname, "../../imports");
@@ -324,6 +325,43 @@ async function main() {
   );
   if (texpactPedidos) {
     console.log("\nTEXPACT pedidos de pagamento:", JSON.stringify(texpactPedidos, null, 2));
+  }
+
+  // The funder identifies a project by its own number on the timesheet form.
+  const PROJECT_CODE_BY_NUMBER: Record<string, string> = {
+    "20783": "TEXQUALIS",
+  };
+  const timesheetFiles = findTimesheetFiles(IMPORTS_DIR);
+  if (timesheetFiles.length > 0) {
+    console.log(`\nImporting ${timesheetFiles.length} mapa(s) de horas/ETI...`);
+    for (const file of timesheetFiles) {
+      const summary = await importTimesheet(file, PROJECT_CODE_BY_NUMBER, projectIds);
+      if (!summary) continue;
+      console.log(`${path.basename(file)}:`, JSON.stringify(summary, null, 2));
+      if (summary.problems.length > 0) {
+        console.warn(
+          `\n⚠ ${path.basename(file)} não foi importado:\n` +
+            summary.problems.map((p) => `    - ${p}`).join("\n"),
+        );
+      }
+      if (summary.calendarMismatches.length > 0) {
+        console.warn(
+          `\n⚠ ${path.basename(file)}: ${summary.calendarMismatches.length} mês(es) em que a\n` +
+            `  linha "Nº de dias úteis trabalháveis" do ficheiro não coincide com o calendário da\n` +
+            `  empresa. Enquanto não for corrigida no ficheiro, todos os ETI dessa folha ficam\n` +
+            `  errados — e o ETI é o que multiplica pelo custo unitário:\n` +
+            summary.calendarMismatches.map((m) => `    - ${m}`).join("\n"),
+        );
+      }
+      if (summary.unbalancedMonths.length > 0) {
+        console.warn(
+          `\n⚠ ${path.basename(file)}: ${summary.unbalancedMonths.length} mês(es) em que a\n` +
+            `  repartição não iguala as horas trabalháveis potenciais — o financiador exige que\n` +
+            `  iguale. Foram importados como estão, para se ver o problema na app:\n` +
+            summary.unbalancedMonths.map((m) => `    - ${m}`).join("\n"),
+        );
+      }
+    }
   }
 
   // Receipts run last: linking a transfer to a request needs every request and

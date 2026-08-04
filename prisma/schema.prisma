@@ -426,16 +426,26 @@ model PersonMonthCapacity {
 // people-allocation planning — distinct from PersonnelAllocation, which is the
 // eligible-*cost* imputation reported to the funding body.
 model ProjectHoursAllocation {
-  id        String  @id @default(cuid())
+  id        String @id @default(cuid())
   personId  String
   projectId String
   yearMonth String
-  hours     Decimal @db.Decimal(8, 2)
+  // The project activity these hours went to, as the funder's timesheet requires
+  // ("É obrigatória a repartição das horas..."). "" for hours known only at
+  // project level — every row the planning sheet produced, which has no activity
+  // column. Part of the unique key, so a month can hold one row per activity.
+  //
+  // Stored as the label the timesheet uses ("2- Análise tecnológica...") and
+  // matched to a budget line by its leading number: TexQualis's approved lines
+  // carry the bare number, Texia's the full name, and rewriting either to agree
+  // would change the key that identifies those lines.
+  activity String  @default("")
+  hours    Decimal @db.Decimal(8, 2)
 
   person  Person  @relation(fields: [personId], references: [id], onDelete: Cascade)
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
-  @@unique([personId, projectId, yearMonth])
+  @@unique([personId, projectId, yearMonth, activity])
   @@index([projectId, yearMonth])
 }
 

@@ -177,10 +177,20 @@ async function importCapacityAndHours(
     for (const [col, yearMonth] of grid) {
       const hours = asNumber(row.getCell(col).value);
       if (hours == null || hours === 0) continue;
+      // The planning sheet has no activity column, so these land at project
+      // level (activity ""). The funder's timesheet needs the split by activity;
+      // it comes from the timesheet workbooks (scripts/import/timesheets.ts).
       await prisma.projectHoursAllocation.upsert({
-        where: { personId_projectId_yearMonth: { personId, projectId, yearMonth } },
+        where: {
+          personId_projectId_yearMonth_activity: {
+            personId,
+            projectId,
+            yearMonth,
+            activity: "",
+          },
+        },
         update: { hours },
-        create: { personId, projectId, yearMonth, hours },
+        create: { personId, projectId, yearMonth, activity: "", hours },
       });
       hoursAllocations++;
     }

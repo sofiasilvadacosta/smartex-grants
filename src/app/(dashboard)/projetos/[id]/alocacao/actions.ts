@@ -33,10 +33,25 @@ export async function saveProjectAllocation(formData: FormData) {
 
   const allowOver = String(formData.get("allowOver") ?? "") === "true";
 
-  const [person, view] = await Promise.all([
+  const [person, view, byActivity] = await Promise.all([
     prisma.person.findUniqueOrThrow({ where: { id: personId }, select: { name: true } }),
     loadCapacity({ personIds: [personId], months: [yearMonth] }),
+    prisma.projectHoursAllocation.findMany({
+      where: { personId, projectId, yearMonth, activity: { not: "" } },
+      select: { activity: true },
+    }),
   ]);
+
+  // This screen holds one number per project, which the timesheet splits by
+  // activity. Writing that single number here while activity rows exist would
+  // add a second, project-level row on top of them and double the month.
+  if (byActivity.length > 0) {
+    throw new Error(
+      `As horas de ${person.name} em ${yearMonth} neste projeto estão repartidas por ` +
+        `${byActivity.length} atividade(s), como o mapa de horas exige. Edita-as na timesheet ` +
+        `da pessoa — aqui só se conseguiria gravar um total, que ficaria a somar por cima.`,
+    );
+  }
 
   const existing = view.get(personId, yearMonth);
   // A month with no capacity row and no allocation yet still has the global
@@ -69,16 +84,15 @@ export async function saveProjectAllocation(formData: FormData) {
     );
   }
 
+  const key = { personId, projectId, yearMonth, activity: "" };
   if (requested === 0) {
     // deleteMany, not delete: removing a promise that was never made must not be
     // an error, so the "clear this cell" path stays idempotent.
-    await prisma.projectHoursAllocation.deleteMany({
-      where: { personId, projectId, yearMonth },
-    });
+    await prisma.projectHoursAllocation.deleteMany({ where: key });
   } else {
     await prisma.projectHoursAllocation.upsert({
-      where: { personId_projectId_yearMonth: { personId, projectId, yearMonth } },
-      create: { personId, projectId, yearMonth, hours: requested },
+      where: { personId_projectId_yearMonth_activity: key },
+      create: { ...key, hours: requested },
       update: { hours: requested },
     });
   }

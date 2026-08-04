@@ -68,11 +68,23 @@ export default async function AlocacaoPage({
     }),
   ]);
 
-  const otherProjects = await prisma.project.findMany({
-    where: { id: { not: project.id } },
-    select: { id: true, code: true },
-  });
+  const [otherProjects, splitByActivity] = await Promise.all([
+    prisma.project.findMany({
+      where: { id: { not: project.id } },
+      select: { id: true, code: true },
+    }),
+    // People whose hours on this project are already broken down by activity, as
+    // the funder's timesheet requires. Their total cannot be edited here: this
+    // screen holds one number per project and saving it would sit on top of the
+    // activity rows rather than replace them.
+    prisma.projectHoursAllocation.groupBy({
+      by: ["personId"],
+      where: { projectId: project.id, yearMonth, activity: { not: "" } },
+      _count: { _all: true },
+    }),
+  ]);
   const otherCode = new Map(otherProjects.map((p) => [p.id, p.code]));
+  const activityCount = new Map(splitByActivity.map((r) => [r.personId, r._count._all]));
 
   const rows = people.map((person) => {
     const month = capacity.get(person.id, yearMonth);
@@ -243,28 +255,44 @@ export default async function AlocacaoPage({
                         : "—"}
                   </td>
                   <td className="px-3 py-2 text-right">
-                    <form action={saveProjectAllocation} className="flex items-center justify-end gap-1">
-                      <input type="hidden" name="projectId" value={project.id} />
-                      <input type="hidden" name="personId" value={row.person.id} />
-                      <input type="hidden" name="yearMonth" value={yearMonth} />
-                      <input
-                        name="hours"
-                        inputMode="decimal"
-                        defaultValue={row.onThis > 0 ? String(row.onThis) : ""}
-                        className="w-16 rounded border border-gray-300 px-1 py-0.5 text-right"
-                        aria-label={`Horas de ${row.person.name} em ${yearMonth}`}
-                      />
-                      <label
-                        className="text-xs text-gray-400"
-                        title="Guardar mesmo que fique acima das horas disponíveis"
+                    {activityCount.has(row.person.id) ? (
+                      <span className="inline-flex items-center gap-2">
+                        <span className="font-medium">{hours(row.onThis)}</span>
+                        <Link
+                          href={`/pessoas/${row.person.id}/timesheet?ano=${yearMonth.slice(0, 4)}`}
+                          className="text-xs text-gray-500 underline"
+                          title={`Repartido por ${activityCount.get(row.person.id)} atividade(s) — editar no mapa de horas`}
+                        >
+                          timesheet
+                        </Link>
+                      </span>
+                    ) : (
+                      <form
+                        action={saveProjectAllocation}
+                        className="flex items-center justify-end gap-1"
                       >
-                        <input type="checkbox" name="allowOver" value="true" className="mr-0.5" />
-                        &gt;100%
-                      </label>
-                      <button type="submit" className="text-xs text-gray-500 underline">
-                        ok
-                      </button>
-                    </form>
+                        <input type="hidden" name="projectId" value={project.id} />
+                        <input type="hidden" name="personId" value={row.person.id} />
+                        <input type="hidden" name="yearMonth" value={yearMonth} />
+                        <input
+                          name="hours"
+                          inputMode="decimal"
+                          defaultValue={row.onThis > 0 ? String(row.onThis) : ""}
+                          className="w-16 rounded border border-gray-300 px-1 py-0.5 text-right"
+                          aria-label={`Horas de ${row.person.name} em ${yearMonth}`}
+                        />
+                        <label
+                          className="text-xs text-gray-400"
+                          title="Guardar mesmo que fique acima das horas disponíveis"
+                        >
+                          <input type="checkbox" name="allowOver" value="true" className="mr-0.5" />
+                          &gt;100%
+                        </label>
+                        <button type="submit" className="text-xs text-gray-500 underline">
+                          ok
+                        </button>
+                      </form>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-xs text-gray-500">
                     {row.elsewhere.length > 0

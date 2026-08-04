@@ -42,6 +42,15 @@ export interface MonthCapacity {
   utilisation: number | null;
   /** Hours promised beyond what exists. 0 when within capacity. */
   overAllocatedBy: number;
+  /**
+   * Hours of the month nothing accounts for. The funder's timesheet is explicit
+   * that this must be zero — "o total da repartição terá de ser sempre igual às
+   * horas trabalháveis potenciais" — so an under-filled month is a rejected form,
+   * not spare room. 0 once the month adds up (or is over).
+   */
+  unaccountedHours: number;
+  /** Projects + other activities + absence, against the month's base hours. */
+  accountedHours: number;
 }
 
 export function monthCapacity(input: MonthCapacityInput): MonthCapacity {
@@ -57,6 +66,8 @@ export function monthCapacity(input: MonthCapacityInput): MonthCapacity {
     for (const hours of input.allocatedByProject.values()) allocatedHours += hours;
   }
 
+  const accountedHours = allocatedHours + reservedHours + absenceHours;
+
   return {
     yearMonth: input.yearMonth,
     baseHours,
@@ -67,6 +78,8 @@ export function monthCapacity(input: MonthCapacityInput): MonthCapacity {
     freeHours: availableHours - allocatedHours,
     utilisation: availableHours > 0 ? allocatedHours / availableHours : null,
     overAllocatedBy: Math.max(0, allocatedHours - availableHours),
+    accountedHours,
+    unaccountedHours: Math.max(0, baseHours - accountedHours),
   };
 }
 

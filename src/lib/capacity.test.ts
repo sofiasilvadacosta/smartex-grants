@@ -66,6 +66,30 @@ test("capacityWith leaves the caller's map alone", () => {
   assert.equal(original.size, 1);
 });
 
+test("reports the hours nothing accounts for, which the funder's form forbids", () => {
+  // 120 h on projects out of a 168 h month leaves 48 h the timesheet cannot
+  // explain, and the funder rejects a month that does not add up exactly.
+  const partial = monthCapacity(AUGUST);
+  assert.equal(partial.unaccountedHours, 48);
+  assert.equal(partial.accountedHours, 120);
+
+  // Filling the gap with non-project work balances the month.
+  const balanced = monthCapacity({ ...AUGUST, nonProjectHours: 48 });
+  assert.equal(balanced.unaccountedHours, 0);
+  assert.equal(balanced.accountedHours, 168);
+
+  // So does holiday: absence counts towards the split, it is not missing time.
+  const withHoliday = monthCapacity({ ...AUGUST, absenceDays: 6 });
+  assert.equal(withHoliday.absenceHours, 48);
+  assert.equal(withHoliday.unaccountedHours, 0);
+});
+
+test("an over-filled month has nothing unaccounted for", () => {
+  const over = monthCapacity({ ...AUGUST, nonProjectHours: 80 });
+  assert.equal(over.unaccountedHours, 0);
+  assert.equal(over.overAllocatedBy, 32);
+});
+
 test("imputation divides by the month's base hours, not by hours net of holiday", () => {
   // Someone on holiday half the month who still charged 84 h is at 50%, not 100%:
   // the 14/11 rule already prices holiday into the monthly cost.
