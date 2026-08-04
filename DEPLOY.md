@@ -1,84 +1,105 @@
 # Pôr a Smartex Grants no ar (Vercel)
 
 Do princípio ao fim demora cerca de meia hora. Precisas de três coisas que só tu
-podes criar: uma base de dados Postgres, credenciais Google e o projeto Vercel.
+podes criar: o projeto Vercel, uma base de dados Postgres e credenciais Google.
 O código já está preparado para as três.
+
+**A ordem importa.** Cria o projeto Vercel *primeiro*: a base de dados liga-se a
+um projeto existente, e o URL do projeto é o que o Google precisa de saber. Fazer
+pela ordem inversa leva a becos sem saída.
 
 Os ficheiros de origem (`imports/`) **nunca saem da tua máquina**. Os dados vão
 diretamente do teu computador para a base de dados de produção, no passo 6.
 
 ---
 
-## 1. Base de dados Postgres
-
-No painel do Vercel, **Storage → Create Database → Neon (Postgres)**. Qualquer
-Postgres 14+ serve; o Neon é o mais direto porque o Vercel injeta as variáveis
-sozinho.
-
-Duas coisas a confirmar:
-
-- **Usa a connection string com pooling** (no Neon é a que tem `-pooler` no
-  host). A app corre em funções serverless: cada instância abre a sua própria
-  ligação, e sem pooler o Postgres acaba por recusar ligações. O código já
-  limita o pool a 2 ligações por instância em produção.
-- A extensão **`pg_trgm`** tem de estar disponível. É criada automaticamente
-  pela primeira migração; o Neon e o Vercel Postgres permitem-na. Se usares
-  outro fornecedor e a migração falhar aqui, é preciso ativá-la primeiro.
-
-Guarda a connection string — é o `DATABASE_URL`.
-
-## 2. Credenciais Google
-
-Em <https://console.cloud.google.com> → **APIs & Services → Credentials →
-Create Credentials → OAuth client ID**, tipo *Web application*.
-
-Em **Authorized redirect URIs** põe, com o domínio real que o Vercel te der:
-
-```
-https://<o-teu-dominio>.vercel.app/api/auth/callback/google
-```
-
-Se mais tarde ligares um domínio próprio, acrescenta também o dele — podem
-coexistir. Guarda o *Client ID* e o *Client secret*.
-
-Nota: a app já rejeita, no servidor, qualquer conta que não termine em
-`@smartex.ai`, mesmo que o cliente OAuth esteja aberto a mais domínios.
-
-## 3. Chave de sessão
-
-Gera uma chave aleatória:
-
-```bash
-openssl rand -base64 32
-```
-
-O valor impresso é o `AUTH_SECRET`. (`npx auth secret` também serve, mas escreve
-o valor num ficheiro `.env.local` em vez de o mostrar.)
-
-## 4. Projeto no Vercel
+## 1. Projeto no Vercel
 
 **Add New → Project**, importa `sofiasilvadacosta/smartex-grants`. O Vercel
-deteta Next.js sozinho; não mexas nos comandos de build.
+deteta Next.js sozinho; não mexas nos comandos de build. Faz **Deploy**.
 
-Em **Settings → Environment Variables**, define para **Production**:
+O build passa (corre `prisma generate` sozinho e não precisa de base de dados
+para compilar), mas **a app vai dar erro ao abrir** — ainda não tem base de dados
+nem credenciais. É esperado; por agora só precisamos que o projeto exista e que
+te dê um URL.
 
-| Variável | Valor |
-|---|---|
-| `DATABASE_URL` | a connection string com pooling do passo 1 |
-| `AUTH_SECRET` | o valor do passo 3 |
-| `AUTH_GOOGLE_ID` | o Client ID do passo 2 |
-| `AUTH_GOOGLE_SECRET` | o Client secret do passo 2 |
-
-> Se algum dia usares *Preview deployments*, dá-lhes uma base de dados
-> diferente. Partilhar o `DATABASE_URL` com produção significa que qualquer
-> branch escreve nos dados reais.
+Anota o URL que o Vercel atribuiu (algo como
+`https://smartex-grants.vercel.app`) — é preciso no passo 3.
 
 O branch de produção é o `main`. O branch de trabalho
 (`claude/funded-projects-webapp-i9qjju`) aponta para o mesmo commit; quando
 divergirem, faz merge para `main` para publicar.
 
-Faz **Deploy**. O build corre `prisma generate` sozinho (o cliente gerado não
-está no repositório) e não precisa da base de dados para compilar.
+## 2. Base de dados Postgres
+
+O caminho mais simples é criar a base de dados diretamente no
+<https://neon.tech>: cria conta, cria um projeto, e ele mostra logo a
+*connection string*. Copia-a — é o `DATABASE_URL`. Uma variável, um valor.
+
+Alternativa: **Storage → Create Database → Neon** dentro do Vercel, que injeta a
+variável sozinho. Faz o mesmo, mas faz mais perguntas: nesse ecrã escolhe **só
+Production** nos ambientes (com Preview marcado, qualquer branch passa a escrever
+nos dados reais), deixa as caixas de *Create database branch* vazias, e não
+preenchas o *Custom Prefix* — a variável tem de acabar chamada `DATABASE_URL`.
+
+Duas notas sobre a string:
+
+- Se tiver **`-pooler`** no nome do servidor, tanto melhor. Um *pooler* é um
+  intermediário que reaproveita ligações entre as funções serverless, em vez de
+  cada uma abrir a sua. Sem ele a base de dados pode recusar ligações quando há
+  muitos pedidos ao mesmo tempo. Para uma equipa pequena qualquer das duas serve
+  — o código já limita a 2 ligações por instância — por isso não fiques presa
+  aqui.
+- A extensão **`pg_trgm`** tem de estar disponível. É criada automaticamente pela
+  primeira migração; o Neon e o Vercel Postgres permitem-na. Com outro fornecedor,
+  se a migração falhar aqui, é preciso ativá-la primeiro.
+
+## 3. Credenciais Google
+
+Em <https://console.cloud.google.com> → **APIs & Services → Credentials →
+Create Credentials → OAuth client ID**, tipo *Web application*.
+
+Em **Authorized redirect URIs** põe o URL do passo 1 seguido de
+`/api/auth/callback/google`:
+
+```
+https://smartex-grants.vercel.app/api/auth/callback/google
+```
+
+Tem de bater exatamente — `https://`, o domínio certo, e esse caminho. Se mais
+tarde ligares um domínio próprio, acrescenta também o dele; podem coexistir.
+Guarda o *Client ID* e o *Client secret*.
+
+Nota: a app já rejeita, no servidor, qualquer conta que não termine em
+`@smartex.ai`, mesmo que o cliente OAuth esteja aberto a mais domínios.
+
+## 4. Variáveis de ambiente
+
+Gera a chave de sessão:
+
+```bash
+openssl rand -base64 32
+```
+
+No Vercel, em **Settings → Environment Variables** do projeto, define as quatro
+para **Production**:
+
+| Variável | Valor |
+|---|---|
+| `DATABASE_URL` | a connection string do passo 2 |
+| `AUTH_SECRET` | o valor que o comando acima imprimiu |
+| `AUTH_GOOGLE_ID` | o Client ID do passo 3 |
+| `AUTH_GOOGLE_SECRET` | o Client secret do passo 3 |
+
+Se usaste o integrador do Vercel no passo 2, o `DATABASE_URL` já lá está — não o
+dupliques.
+
+Depois de as guardar, faz **Deployments → ⋯ → Redeploy** no último deploy. As
+variáveis só entram em vigor num deploy novo.
+
+> Se algum dia usares *Preview deployments*, dá-lhes uma base de dados
+> diferente. Partilhar o `DATABASE_URL` com produção significa que qualquer
+> branch escreve nos dados reais.
 
 ## 5. Reunir os ficheiros de origem
 
@@ -141,7 +162,7 @@ repositório, com os ficheiros de origem em `imports/`:
 
 ```bash
 # Aponta à produção só para estes comandos, sem mexer no teu .env
-export DATABASE_URL="<a connection string do passo 1>"
+export DATABASE_URL="<a connection string do passo 2>"
 
 npm run db:deploy   # cria as tabelas (prisma migrate deploy)
 npm run db:import   # carrega projetos, orçamentos, faturas, RH e pedidos
@@ -157,7 +178,7 @@ Abre o URL do Vercel e entra com a tua conta `@smartex.ai`. **A primeira conta a
 entrar fica automaticamente como Admin**; as seguintes entram como Editor e um
 Admin pode promovê-las.
 
-Se o login falhar com um erro de `redirect_uri_mismatch`, o URI do passo 2 não
+Se o login falhar com um erro de `redirect_uri_mismatch`, o URI do passo 3 não
 corresponde exatamente ao domínio — tem de incluir `https://` e o caminho
 `/api/auth/callback/google`.
 
