@@ -197,6 +197,16 @@ cd smartex-grants
 npm install
 ```
 
+**Em Windows**, o `npm install` no PowerShell falha com *"npm.ps1 cannot be loaded
+because running scripts is disabled on this system"*. É a política de execução do
+PowerShell a bloquear o wrapper `.ps1` do npm, não um problema do projeto. Duas
+saídas: usar `npm.cmd` em vez de `npm` em todos os comandos, o que não altera
+nada no sistema; ou autorizar scripts no teu utilizador, de uma vez:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+```
+
 Cria um ficheiro `.env` na raiz do repositório com uma linha só — a connection
 string do painel do Neon:
 
