@@ -49,6 +49,14 @@ O integrador cria várias variáveis (`POSTGRES_URL`, `DATABASE_URL_UNPOOLED`,
 entre outras). A app usa apenas a **`DATABASE_URL`**; confirma em
 **Settings → Environment Variables** que ela existe, e ignora as restantes.
 
+Depois de criada, a base de dados tem uma página própria em **Storage →
+Settings** com uma opção **Allowed Environments**. Deixa em **"All
+environments"**. A alternativa, *Production environment only*, marca os segredos
+como sensíveis e deixa de os poder ler no painel ou no CLI — e a connection string
+é precisa no passo 6, para correr as migrações e o import da tua máquina. Não é a
+mesma coisa que as caixas de *Environments* da janela de instalação: essas dizem
+onde a variável é injetada, esta diz se a podes ler.
+
 Este ecrã só oferece projetos que já existam — é por isso que o passo 1 vem
 primeiro. Em alternativa podes criar a base de dados diretamente em
 <https://neon.tech> e colar a *connection string* à mão no passo 4.
