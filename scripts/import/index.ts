@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { prisma } from "../../src/lib/db";
 import { seedProjects } from "./seed-projects";
@@ -8,6 +8,7 @@ import { importFamilyB, PENDING_RECONCILIATION_PROJECTS } from "./family-b";
 import { importPeopleAndCapacity } from "./people";
 import { importRhSheets } from "./rh";
 import { importSalaryHistory } from "./salary-history";
+import { importPlannedAssignments } from "./planned-assignments";
 import { importFteProjects } from "./fte-projects";
 import { importQuadroInvestimentos } from "./pp-quadro";
 import { importPessoalFromPp } from "./pp-pessoal";
@@ -21,7 +22,25 @@ import { syncPaymentRequestsFromExecution } from "./lib/sync-payment-requests";
 
 const IMPORTS_DIR = path.resolve(__dirname, "../../imports");
 const GRANTS_WORKBOOK = path.join(IMPORTS_DIR, "Grants_Approved_Execution_v3.xlsx");
-const GESTAO_WORKBOOK = path.join(IMPORTS_DIR, "Smartex_Gestao_Projetos_V4.xlsx");
+/**
+ * The planning workbook is versioned by filename and a new version arrives every
+ * few months, so the newest one in imports/ wins rather than a pinned name that
+ * silently keeps importing last quarter's data.
+ */
+function newestGestaoWorkbook(): string {
+  const versioned = readdirSync(IMPORTS_DIR)
+    .map((name) => ({ name, match: /^Smartex_Gestao_Projetos_V(\d+)\.xlsx$/i.exec(name) }))
+    .filter((entry): entry is { name: string; match: RegExpExecArray } => entry.match !== null)
+    .sort((a, b) => Number(b.match[1]) - Number(a.match[1]));
+  if (versioned.length === 0) {
+    throw new Error(
+      `Nenhum Smartex_Gestao_Projetos_V*.xlsx em ${IMPORTS_DIR} — ver scripts/import/README.md`,
+    );
+  }
+  return path.join(IMPORTS_DIR, versioned[0].name);
+}
+
+const GESTAO_WORKBOOK = newestGestaoWorkbook();
 
 function fileHash(filePath: string): string {
   return createHash("sha256").update(readFileSync(filePath)).digest("hex").slice(0, 16);
@@ -178,6 +197,26 @@ async function main() {
         `\n⚠ ${code}: ${s.fteTotalMismatches.length} linha(s) com FTE anual preenchido mas coluna Total a zero\n` +
           `  — podem ser trabalho cancelado ou fórmula em falta. Foram importadas com o valor anual:\n` +
           s.fteTotalMismatches.map((m) => `    - ${m}`).join("\n"),
+      );
+    }
+  }
+
+  console.log("\nImporting the approved staffing plan (per-project sheets)...");
+  const planned = await importPlannedAssignments(GESTAO_WORKBOOK, projectIds);
+  console.log(JSON.stringify(planned, null, 2));
+  for (const [code, s] of Object.entries(planned.byProject)) {
+    if (s.unresolvedNames.length > 0) {
+      console.warn(
+        `\n⚠ ${code}: ${s.unresolvedNames.length} nome(s) do plano sem pessoa correspondente —\n` +
+          `  não se consegue restringir as rubricas candidatas para eles:\n` +
+          s.unresolvedNames.map((n) => `    - ${n}`).join("\n"),
+      );
+    }
+    if (s.missingFromPlan.length > 0) {
+      console.warn(
+        `\n⚠ ${code}: ${s.missingFromPlan.length} pessoa(s) com execução mas ausentes do plano\n` +
+          `  aprovado — sem atividade nem perfil previstos, a reconciliação fica sem pistas:\n` +
+          s.missingFromPlan.map((n) => `    - ${n}`).join("\n"),
       );
     }
   }
