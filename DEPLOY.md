@@ -49,13 +49,14 @@ O integrador cria várias variáveis (`POSTGRES_URL`, `DATABASE_URL_UNPOOLED`,
 entre outras). A app usa apenas a **`DATABASE_URL`**; confirma em
 **Settings → Environment Variables** que ela existe, e ignora as restantes.
 
-Depois de criada, a base de dados tem uma página própria em **Storage →
-Settings** com uma opção **Allowed Environments**. Deixa em **"All
-environments"**. A alternativa, *Production environment only*, marca os segredos
-como sensíveis e deixa de os poder ler no painel ou no CLI — e a connection string
-é precisa no passo 6, para correr as migrações e o import da tua máquina. Não é a
-mesma coisa que as caixas de *Environments* da janela de instalação: essas dizem
-onde a variável é injetada, esta diz se a podes ler.
+O integrador marca essas variáveis como **Sensitive**, e no Vercel uma variável
+sensível **não se pode voltar a ler** — nem no painel nem no CLI. Isso é bom para
+os segredos, mas significa que a connection string de que precisas no passo 6 não
+sai de lá. Vais buscá-la ao Neon: **Storage → a base de dados → "Open in Neon"**,
+e no painel do Neon está a string de ligação. É a mesma.
+
+Na página da base de dados (**Storage → Settings**) há também uma opção
+**Allowed Environments**; deixa-a como está.
 
 Este ecrã só oferece projetos que já existam — é por isso que o passo 1 vem
 primeiro. Em alternativa podes criar a base de dados diretamente em
@@ -181,7 +182,7 @@ repositório, com os ficheiros de origem em `imports/`:
 
 ```bash
 # Aponta à produção só para estes comandos, sem mexer no teu .env
-export DATABASE_URL="<a connection string do passo 2>"
+export DATABASE_URL="<a connection string, tirada do painel do Neon>"
 
 npm run db:deploy   # cria as tabelas (prisma migrate deploy)
 npm run db:import   # carrega projetos, orçamentos, faturas, RH e pedidos
