@@ -1,8 +1,9 @@
 # Smartex Grants
 
 Plataforma de gestão dos projetos financiados da Smartex: orçamento por
-rubrica, faturas/investimentos com reconciliação orçamental, e (em fases
-seguintes) pedidos de pagamento, recebimentos, projeções e deliverables. Ver
+rubrica, faturas e RH com reconciliação orçamental, pedidos de pagamento e
+decisões do financiador, recebimentos e projeções, deliverables e milestones.
+Ver
 [`DEPLOY.md`](DEPLOY.md) para pôr a plataforma no ar e
 [`scripts/import/README.md`](scripts/import/README.md) para os dados.
 

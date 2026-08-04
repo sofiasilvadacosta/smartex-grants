@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { projectDataQuality } from "@/lib/data-quality";
+import { outstandingFor } from "@/lib/receipts";
 import { eur } from "@/lib/format";
 
 export default async function DashboardPage() {
@@ -9,7 +10,8 @@ export default async function DashboardPage() {
     orderBy: { name: "asc" },
   });
 
-  const [quality, invoiceCounts, allocationCounts] = await Promise.all([
+  const [quality, invoiceCounts, allocationCounts, receiptTotals, requestsWithDecisions] =
+    await Promise.all([
     projectDataQuality(),
     prisma.invoice.groupBy({
       by: ["projectId"],
@@ -21,7 +23,47 @@ export default async function DashboardPage() {
       where: { matchStatus: { in: ["UNMATCHED", "AMBIGUOUS"] } },
       _count: { _all: true },
     }),
+    prisma.receipt.groupBy({ by: ["projectId"], _sum: { amount: true } }),
+    // The outstanding amount needs each request's paid/approved figure against
+    // its own receipts, which is per-project arithmetic rather than a single
+    // aggregate — so fetch the parts and combine them below.
+    prisma.paymentRequest.findMany({
+      select: {
+        projectId: true,
+        paidAmount: true,
+        decisions: {
+          where: { isCurrent: true },
+          orderBy: { decisionDate: "desc" },
+          take: 1,
+          select: { approvedAmount: true },
+        },
+        receipts: { select: { amount: true } },
+      },
+    }),
   ]);
+
+  const receivedByProject = new Map(
+    receiptTotals.map((row) => [row.projectId, Number(row._sum.amount ?? 0)]),
+  );
+  const outstandingByProject = new Map<string, number>();
+  for (const request of requestsWithDecisions) {
+    const approved = request.decisions[0]?.approvedAmount;
+    const gap = outstandingFor({
+      paymentRequestId: "",
+      ppNumber: "",
+      approvedAmount: approved == null ? null : Number(approved),
+      paidAmount: request.paidAmount === null ? null : Number(request.paidAmount),
+      receivedAmount: request.receipts.reduce((sum, r) => sum + Number(r.amount), 0),
+      status: null,
+      decisionDate: null,
+    });
+    if (gap) {
+      outstandingByProject.set(
+        request.projectId,
+        (outstandingByProject.get(request.projectId) ?? 0) + gap,
+      );
+    }
+  }
   const unmatchedByProject = new Map<string, number>();
   for (const row of [...invoiceCounts, ...allocationCounts]) {
     unmatchedByProject.set(
@@ -58,6 +100,8 @@ export default async function DashboardPage() {
             );
             const pct = eligibleCost > 0 ? Math.round((executed / eligibleCost) * 100) : 0;
             const unmatched = unmatchedByProject.get(project.id) ?? 0;
+            const received = receivedByProject.get(project.id) ?? 0;
+            const outstanding = outstandingByProject.get(project.id) ?? 0;
             const q = quality.get(project.id);
             // Only the problems worth acting on, in the order they block work:
             // no budget to reconcile against, then costs beyond the approved
@@ -97,6 +141,16 @@ export default async function DashboardPage() {
                       <span className="text-gray-400">({pct}%)</span>
                     </dd>
                   </div>
+                  <div className="flex justify-between">
+                    <dt className="text-gray-500">Recebido</dt>
+                    <dd className="font-medium text-gray-900">{eur(received)}</dd>
+                  </div>
+                  {outstanding > 0 && (
+                    <div className="flex justify-between">
+                      <dt className="text-gray-500">Aprovado por receber</dt>
+                      <dd className="font-medium text-amber-600">{eur(outstanding)}</dd>
+                    </div>
+                  )}
                   <div className="flex justify-between">
                     <dt className="text-gray-500">Linhas por reconciliar</dt>
                     <dd className={unmatched > 0 ? "font-medium text-amber-600" : "text-gray-400"}>

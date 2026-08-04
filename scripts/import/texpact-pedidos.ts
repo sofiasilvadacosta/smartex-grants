@@ -190,11 +190,12 @@ export async function importTexpactPedidos(
     });
     const request = await prisma.paymentRequest.upsert({
       where: { projectId_ppNumber: { projectId, ppNumber: req.ppNumber } },
-      update: { requestedAmount: req.submitted, notes: notes || null },
+      update: { requestedAmount: req.submitted, paidAmount: req.paid, notes: notes || null },
       create: {
         projectId,
         ppNumber: req.ppNumber,
         requestedAmount: req.submitted,
+        paidAmount: req.paid,
         notes: notes || null,
       },
     });

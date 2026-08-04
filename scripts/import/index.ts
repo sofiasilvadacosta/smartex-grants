@@ -14,6 +14,7 @@ import { importMovimentos } from "./pp-movimentos";
 import { importDeslocacoes } from "./pp-deslocacoes";
 import { importDecisoes } from "./pp-decisoes";
 import { importTexpactPedidos } from "./texpact-pedidos";
+import { importReceipts } from "./receipts";
 import { syncPaymentRequestsFromExecution } from "./lib/sync-payment-requests";
 
 const IMPORTS_DIR = path.resolve(__dirname, "../../imports");
@@ -241,6 +242,8 @@ async function main() {
         "em agosto); IDs de investimento 4, 8, 15, 16, 17, 18 e 21 limitados ao valor aprovado " +
         "em candidatura (-24 596,89 €). Já pago 58 970,29 € de adiantamento, pelo que o " +
         "remanescente proposto é 163 092,79 €.",
+      // The analysis states an advance of 58 970,29 € was already paid.
+      paidAmount: 58970.29,
       documentFile: "DefectFree_Decisao_PP3.pdf",
     },
   ]);
@@ -300,6 +303,21 @@ async function main() {
   );
   if (texpactPedidos) {
     console.log("\nTEXPACT pedidos de pagamento:", JSON.stringify(texpactPedidos, null, 2));
+  }
+
+  // Receipts run last: linking a transfer to a request needs every request and
+  // its paid amount already in place.
+  const receipts = await importReceipts(GRANTS_WORKBOOK, projectIds);
+  console.log("\nRecebimentos:", JSON.stringify(receipts, null, 2));
+  if (Object.keys(receipts.outOfScope).length > 0) {
+    console.warn(
+      `\n⚠ ${Object.keys(receipts.outOfScope).length} descrição(ões) de recebimento não ` +
+        `correspondem a nenhum projeto desta plataforma — são apoios a outras\n` +
+        `  operações e ficam de fora:\n` +
+        Object.entries(receipts.outOfScope)
+          .map(([d, v]) => `    - ${d}: ${v.toFixed(2)} €`)
+          .join("\n"),
+    );
   }
 
   console.log(

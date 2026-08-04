@@ -275,6 +275,33 @@ version (each movement on its own activity), which is the one that can be traced
 to a person and a month; the Quadro's split cannot be reproduced from any data we
 have. Worth resolving with the funder before the next submission.
 
+### Recebimentos
+
+`receipts.ts` reads "Incomes - Grants", a bank-statement extract of one row per
+transfer. It names the project only in free text and says nothing about which
+request a transfer answers, so:
+
+- The project is resolved from that text against a small table of the spellings
+  the statement actually uses. A description matching no project of this
+  platform is **reported, not guessed at** — "Horizont 2020" (1 025 062,50 €)
+  and "Indústria 4.0" (175 618,52 €) are support for other operations.
+- The request is resolved by matching the transfer against `PaymentRequest.
+  paidAmount`, which the funder states (a column in TexP@ct's workbook, a
+  sentence in Defect Free's decision). An amount matching exactly one request of
+  that project links; an amount matching several does not.
+
+That covers 16 transfers, 1 617 453,33 €, of which 5 link to a request. Two
+independent checks passed on the way in: Produtech's six receipts sum to
+753 769,72 €, exactly the FINANCIAMENTO/Executado figure on its `_Approved`
+sheet, and TexP@ct's seven each equal one of the "Pagamento realizado" values in
+its payment-request workbook. What stays unlinked is the three advances, which
+precede any request by nature.
+
+`src/lib/receipts.ts` derives what is still owed rather than storing it. A
+negative paid amount is treated as *not receivable*: TexP@ct's request 9 carries
+−186 415,79 €, the funder recovering part of an advance, which must not read as
+money still to come.
+
 Imported from `Smartex_Gestao_Projetos_V4.xlsx`:
 
 - **People** (`DADOS`): 80 people with salary, profile and entry/exit dates.

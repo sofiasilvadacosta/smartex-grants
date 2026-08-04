@@ -21,6 +21,8 @@ export interface DecisionInput {
   // the database — a decision document is often the first record of a request
   // that no working spreadsheet covers.
   requestedAmount?: number;
+  // What the funder paid out for this request, when the document says so.
+  paidAmount?: number;
   notes: string;
   // Relative to the imports directory; skipped when absent.
   documentFile?: string;
@@ -65,15 +67,21 @@ export async function importDecisoes(
           projectId,
           ppNumber: decision.ppNumber,
           requestedAmount: decision.requestedAmount,
+          paidAmount: decision.paidAmount,
           notes: "Criado a partir do documento de decisão; sem folha de execução associada.",
         },
         select: { id: true },
       });
       summary.requestsCreated.push(decision.ppNumber);
-    } else if (decision.requestedAmount !== undefined) {
+    } else {
       await prisma.paymentRequest.update({
         where: { id: request.id },
-        data: { requestedAmount: decision.requestedAmount },
+        data: {
+          ...(decision.requestedAmount !== undefined
+            ? { requestedAmount: decision.requestedAmount }
+            : {}),
+          ...(decision.paidAmount !== undefined ? { paidAmount: decision.paidAmount } : {}),
+        },
       });
     }
 
