@@ -95,11 +95,21 @@ Nota: a app já rejeita, no servidor, qualquer conta que não termine em
 
 ## 4. Variáveis de ambiente
 
-Gera a chave de sessão:
+Gera a chave de sessão. Em macOS ou Linux:
 
 ```bash
 openssl rand -base64 32
 ```
+
+Em Windows, o `openssl` não vem instalado; no PowerShell:
+
+```powershell
+$b = New-Object byte[] 32
+[System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
+[Convert]::ToBase64String($b)
+```
+
+Qualquer dos dois imprime 44 caracteres acabados em `=`.
 
 No Vercel, em **Settings → Environment Variables** do projeto, define as quatro
 para **Production**:
@@ -107,7 +117,7 @@ para **Production**:
 | Variável | Valor |
 |---|---|
 | `DATABASE_URL` | criada pelo integrador do passo 2, ou colada à mão se usaste o neon.tech |
-| `AUTH_SECRET` | o valor que o comando acima imprimiu |
+| `AUTH_SECRET` | o valor que o comando acima imprimiu — o campo *Value* mostra um exemplo em cinzento, tem de ficar preenchido a preto |
 | `AUTH_GOOGLE_ID` | o Client ID do passo 3 |
 | `AUTH_GOOGLE_SECRET` | o Client secret do passo 3 |
 
