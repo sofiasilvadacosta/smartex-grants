@@ -1,6 +1,12 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
-import { createProject } from "./actions";
+import { createProject, setProjectExcluded } from "./actions";
+
+const STATUS_LABEL: Record<string, string> = {
+  ACTIVE: "ativo",
+  CLOSED: "fechado",
+  EXCLUDED: "fora do âmbito",
+};
 
 export default async function ProjetosPage() {
   const projects = await prisma.project.findMany({
@@ -24,25 +30,54 @@ export default async function ProjetosPage() {
               <th className="px-4 py-2 text-left font-medium text-gray-500">Estado</th>
               <th className="px-4 py-2 text-right font-medium text-gray-500">Rubricas</th>
               <th className="px-4 py-2 text-right font-medium text-gray-500">Faturas</th>
+              <th className="px-4 py-2 text-right font-medium text-gray-500">Âmbito</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {projects.map((p) => (
-              <tr key={p.id} className="hover:bg-gray-50">
-                <td className="px-4 py-2">
-                  <Link href={`/projetos/${p.id}`} className="font-medium text-gray-900 hover:underline">
-                    {p.name}
-                  </Link>
-                </td>
-                <td className="px-4 py-2 text-gray-500">{p.code}</td>
-                <td className="px-4 py-2 text-gray-500">
-                  {p.startDate?.toLocaleDateString("pt-PT")} – {p.endDate?.toLocaleDateString("pt-PT")}
-                </td>
-                <td className="px-4 py-2 text-gray-500">{p.status}</td>
-                <td className="px-4 py-2 text-right text-gray-500">{p._count.budgetLines}</td>
-                <td className="px-4 py-2 text-right text-gray-500">{p._count.invoices}</td>
-              </tr>
-            ))}
+            {projects.map((p) => {
+              const excluded = p.status === "EXCLUDED";
+              return (
+                <tr
+                  key={p.id}
+                  className={excluded ? "bg-gray-50/50 text-gray-400" : "hover:bg-gray-50"}
+                >
+                  <td className="px-4 py-2">
+                    <Link
+                      href={`/projetos/${p.id}`}
+                      className={`font-medium hover:underline ${excluded ? "" : "text-gray-900"}`}
+                    >
+                      {p.name}
+                    </Link>
+                  </td>
+                  <td className="px-4 py-2 text-gray-500">{p.code}</td>
+                  <td className="px-4 py-2 text-gray-500">
+                    {p.startDate?.toLocaleDateString("pt-PT")} –{" "}
+                    {p.endDate?.toLocaleDateString("pt-PT")}
+                  </td>
+                  <td className="px-4 py-2 text-xs text-gray-500">
+                    {STATUS_LABEL[p.status] ?? p.status}
+                  </td>
+                  <td className="px-4 py-2 text-right text-gray-500">{p._count.budgetLines}</td>
+                  <td className="px-4 py-2 text-right text-gray-500">{p._count.invoices}</td>
+                  <td className="px-4 py-2 text-right">
+                    {p.status === "CLOSED" ? (
+                      <span className="text-xs text-gray-400">—</span>
+                    ) : (
+                      <form action={setProjectExcluded}>
+                        <input type="hidden" name="id" value={p.id} />
+                        <input type="hidden" name="excluded" value={excluded ? "false" : "true"} />
+                        <button
+                          type="submit"
+                          className="text-xs text-gray-500 underline hover:text-gray-900"
+                        >
+                          {excluded ? "incluir no dashboard" : "excluir do dashboard"}
+                        </button>
+                      </form>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

@@ -20,6 +20,12 @@ const PROJECTS = [
   },
 ] as const;
 
+// Approved and running, but deliberately not managed in this platform, so it
+// starts out of scope on a fresh database instead of showing as a card of zeros.
+// The status is only set on create: taking it back into scope is a decision made
+// in the app, and a re-import must not undo it.
+const EXCLUDED_CODES = new Set(["RHAQ"]);
+
 export async function seedProjects(): Promise<Record<string, string>> {
   const idByCode: Record<string, string> = {};
   for (const p of PROJECTS) {
@@ -31,6 +37,7 @@ export async function seedProjects(): Promise<Record<string, string>> {
         name: p.name,
         startDate: new Date(p.startDate),
         endDate: new Date(p.endDate),
+        status: EXCLUDED_CODES.has(p.code) ? "EXCLUDED" : "ACTIVE",
       },
     });
     idByCode[p.code] = project.id;

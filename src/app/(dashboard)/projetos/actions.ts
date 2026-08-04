@@ -33,6 +33,33 @@ export async function createProject(formData: FormData) {
   revalidatePath("/projetos");
 }
 
+// Take a project out of the platform's scope, or bring it back. Excluded
+// projects keep every row they have — this only stops them being counted and
+// shown as if they were being managed here.
+export async function setProjectExcluded(formData: FormData) {
+  const user = await requireUser();
+  const id = String(formData.get("id") ?? "");
+  const excluded = String(formData.get("excluded") ?? "") === "true";
+  if (!id) throw new Error("Projeto em falta");
+
+  const project = await prisma.project.findUniqueOrThrow({
+    where: { id },
+    select: { status: true },
+  });
+  // Reopening restores ACTIVE rather than guessing at CLOSED: a project someone
+  // is putting back into scope is one they intend to work on.
+  if (excluded && project.status === "CLOSED") {
+    throw new Error("Um projeto fechado já não conta para o dashboard");
+  }
+
+  await prisma.project.update({
+    where: { id },
+    data: { status: excluded ? "EXCLUDED" : "ACTIVE", updatedById: user.id },
+  });
+  revalidatePath("/projetos");
+  revalidatePath("/");
+}
+
 export async function createBudgetLine(formData: FormData) {
   const user = await requireUser();
   const projectId = String(formData.get("projectId") ?? "");

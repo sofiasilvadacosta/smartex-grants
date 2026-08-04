@@ -7,6 +7,7 @@ import { importFamilyA } from "./family-a";
 import { importFamilyB, PENDING_RECONCILIATION_PROJECTS } from "./family-b";
 import { importPeopleAndCapacity } from "./people";
 import { importRhSheets } from "./rh";
+import { importSalaryHistory } from "./salary-history";
 import { importFteProjects } from "./fte-projects";
 import { importQuadroInvestimentos } from "./pp-quadro";
 import { importPessoalFromPp } from "./pp-pessoal";
@@ -123,6 +124,26 @@ async function main() {
     await recordImportRun(path.basename(GRANTS_WORKBOOK), `${code}_RH`, counters, grantsHash, startRh);
   }
   console.log(JSON.stringify(summaryRh, null, 2));
+
+  // After the RH sheets: those are what carry the dated monthly base the pay
+  // history is reconstructed from.
+  console.log("\nBuilding pay history (RBM per month + annual gross)...");
+  const salaryHistory = await importSalaryHistory(GESTAO_WORKBOOK);
+  console.log(
+    JSON.stringify(
+      { ...salaryHistory, peopleWithoutMonthlyBase: salaryHistory.peopleWithoutMonthlyBase.length },
+      null,
+      2,
+    ),
+  );
+  if (salaryHistory.peopleWithoutMonthlyBase.length > 0) {
+    console.warn(
+      `\n⚠ ${salaryHistory.peopleWithoutMonthlyBase.length} pessoa(s) sem RBM Elegível — não\n` +
+        `  constam de nenhuma folha de RH, por isso só se conhece o salário anual e não se\n` +
+        `  consegue calcular custo elegível de pessoal para elas. Preencher a RBM na página\n` +
+        `  da pessoa quando forem alocadas a um projeto.`,
+    );
+  }
 
   console.log("\nImporting FTE-based budgets (Texia, TexQualis)...");
   const startFte = new Date();

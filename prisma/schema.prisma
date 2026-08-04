@@ -45,6 +45,8 @@ model User {
   createdReceipts         Receipt[]             @relation("ReceiptCreatedBy")
   createdProjections      ReceiptProjection[]   @relation("ReceiptProjectionCreatedBy")
   createdDeliverables     Deliverable[]         @relation("DeliverableCreatedBy")
+  createdSalaryRecords    SalaryRecord[]        @relation("SalaryRecordCreatedBy")
+  createdAbsences         Absence[]             @relation("AbsenceCreatedBy")
 }
 
 model Account {
@@ -88,6 +90,12 @@ model VerificationToken {
 enum ProjectStatus {
   ACTIVE
   CLOSED
+  // Approved and running, but deliberately not managed in this platform (RHAQ).
+  // Distinct from CLOSED, which means finished: an excluded project has no data
+  // here because nobody put it here, not because there is nothing left to do.
+  // Kept as a project rather than deleted so the decision stays visible and
+  // reversible in one click.
+  EXCLUDED
 }
 
 model Project {
@@ -287,23 +295,106 @@ model Invoice {
 // ---------- People & capacity ----------
 
 model Person {
-  id          String    @id @default(cuid())
-  name        String
-  initials    String    @unique
-  grossSalary Decimal?  @db.Decimal(12, 2)
-  profile     String?
-  entryDate   DateTime?
-  exitDate    DateTime?
-  obs         String?
-  active      Boolean   @default(true)
+  id        String    @id @default(cuid())
+  name      String
+  initials  String    @unique
+  profile   String?
+  entryDate DateTime?
+  exitDate  DateTime?
+  obs       String?
+  active    Boolean   @default(true)
 
   capacities       PersonMonthCapacity[]
   hoursAllocations ProjectHoursAllocation[]
   allocations      PersonnelAllocation[]
+  salaries         SalaryRecord[]
+  absences         Absence[]
   deliverables     Deliverable[]            @relation("DeliverableResponsible")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// Effective-dated pay. There is no current-salary column on Person on purpose:
+// the eligible personnel cost of a month's work is computed from the pay in
+// force *that* month, so a raise must add a row, never rewrite the past. A
+// single column would silently restate every historical payment request the
+// next time someone got a raise.
+model SalaryRecord {
+  id       String @id @default(cuid())
+  personId String
+  // First month this record applies to, "YYYY-MM". Month granularity because
+  // personnel cost is declared to the funder by month, never by day.
+  effectiveFrom String
+
+  // Annual gross as tracked by HR (the "Salário" column of the DADOS sheet).
+  // Informational only — eligible cost is never computed from it.
+  grossAnnual Decimal? @db.Decimal(12, 2)
+  // "RBM Elegível": the monthly base the funder accepts, and the only figure
+  // eligible cost is computed from (see src/lib/personnel-cost.ts).
+  //
+  // Deliberately not derived from grossAnnual. In the source data the ratio
+  // grossAnnual / monthlyBase is a constant 16,843 across every member of staff,
+  // so the two clearly are proportional — but that factor matches no combination
+  // of the funder's 14-months-over-11 rule and the 23,75% social security rate
+  // (14 x 1,2375 = 17,325; 14 + 12 x 0,2375 = 16,85). Until the relationship is
+  // confirmed, deriving one from the other would put an unexplained constant
+  // underneath every cost this platform reports.
+  monthlyBase Decimal? @db.Decimal(12, 2)
+  // Employer social security rate for this person, when it differs from the
+  // 23,75% every row in the source sheets uses.
+  socialSecurityRate Decimal? @db.Decimal(6, 4)
+
+  // Why it changed ("revisão anual", "promoção"), and for rows created by the
+  // initial migration, what was reconstructed and what was assumed.
+  reason String?
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime @default(now())
+  createdById String?
+  createdBy   User?    @relation("SalaryRecordCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  // One record per person per month: a correction replaces the row for that
+  // month rather than adding a second, ambiguous one.
+  @@unique([personId, effectiveFrom])
+  @@index([personId, effectiveFrom])
+}
+
+enum AbsenceType {
+  VACATION
+  SICK
+  PARENTAL
+  UNPAID
+  OTHER
+}
+
+// Time a person was not available, recorded by month rather than by date range.
+// Everything else in this platform — capacity, allocation, declared cost — is
+// monthly, and splitting a date range across months needs a holiday calendar we
+// do not have. The dates are kept for reference when known.
+model Absence {
+  id        String      @id @default(cuid())
+  personId  String
+  yearMonth String
+  type      AbsenceType
+  // Working days absent within this month. Converted to hours with
+  // HOURS_PER_WORKING_DAY (src/lib/capacity.ts) when computing free capacity.
+  days      Decimal     @db.Decimal(5, 2)
+  startDate DateTime?
+  endDate   DateTime?
+  notes     String?
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdById String?
+  createdBy   User?    @relation("AbsenceCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  // No unique key on (person, month): a month can hold holiday and sick leave
+  // as separate, separately-justified entries.
+  @@index([personId, yearMonth])
 }
 
 // Company-wide working-hours calendar (HorasProdutivas sheet): how many hours
@@ -320,6 +411,10 @@ model PersonMonthCapacity {
   personId        String
   yearMonth       String
   productiveHours Decimal @db.Decimal(8, 2)
+  // Hours reserved for work outside the funded projects (product, operations,
+  // customer support). Without it, someone fully booked on grants looks free
+  // for more, which is the over-allocation this platform exists to prevent.
+  nonProjectHours Decimal? @db.Decimal(8, 2)
 
   person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
 

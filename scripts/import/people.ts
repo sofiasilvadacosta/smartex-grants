@@ -61,9 +61,11 @@ async function importPeople(workbook: Awaited<ReturnType<typeof loadWorkbook>>) 
     seenInitials.set(initials, name);
 
     const obs = asString(row.getCell(15).value);
+    // The "Salário" column is not read here: pay is effective-dated and lives in
+    // SalaryRecord, built by scripts/import/salary-history.ts once the RH sheets
+    // have been read (they are what carries the dated monthly base).
     const fields = {
       name,
-      grossSalary: asNumber(row.getCell(12).value),
       entryDate: asDate(row.getCell(13).value),
       exitDate: asDate(row.getCell(14).value),
       obs,

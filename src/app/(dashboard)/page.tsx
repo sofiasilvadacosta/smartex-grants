@@ -6,6 +6,10 @@ import { eur } from "@/lib/format";
 
 export default async function DashboardPage() {
   const projects = await prisma.project.findMany({
+    // Projects deliberately not managed here (RHAQ) would show as a card of
+    // zeros, which reads as missing data rather than as a decision. They stay
+    // listed on /projetos, where the status says why.
+    where: { status: { not: "EXCLUDED" } },
     include: { budgetLines: true },
     orderBy: { name: "asc" },
   });
