@@ -32,15 +32,26 @@ divergirem, faz merge para `main` para publicar.
 
 ## 2. Base de dados Postgres
 
-O caminho mais simples é criar a base de dados diretamente no
-<https://neon.tech>: cria conta, cria um projeto, e ele mostra logo a
-*connection string*. Copia-a — é o `DATABASE_URL`. Uma variável, um valor.
+Agora que o projeto existe, o caminho mais curto é dentro do próprio Vercel:
+**Storage → Create Database → Neon**. Não precisas de outra conta e a base de
+dados fica ligada ao projeto sozinha.
 
-Alternativa: **Storage → Create Database → Neon** dentro do Vercel, que injeta a
-variável sozinho. Faz o mesmo, mas faz mais perguntas: nesse ecrã escolhe **só
-Production** nos ambientes (com Preview marcado, qualquer branch passa a escrever
-nos dados reais), deixa as caixas de *Create database branch* vazias, e não
-preenchas o *Custom Prefix* — a variável tem de acabar chamada `DATABASE_URL`.
+Nesse ecrã:
+
+| Campo | O que escolher |
+|---|---|
+| Project | `smartex-grants` |
+| Environments | **só Production** — com Preview marcado, qualquer branch passa a escrever nos dados reais |
+| Create database branch for deployment | deixar as duas caixas vazias |
+| Custom Prefix | deixar vazio, para a variável ficar chamada `DATABASE_URL` |
+
+O integrador cria várias variáveis (`POSTGRES_URL`, `DATABASE_URL_UNPOOLED`,
+entre outras). A app usa apenas a **`DATABASE_URL`**; confirma em
+**Settings → Environment Variables** que ela existe, e ignora as restantes.
+
+Este ecrã só oferece projetos que já existam — é por isso que o passo 1 vem
+primeiro. Em alternativa podes criar a base de dados diretamente em
+<https://neon.tech> e colar a *connection string* à mão no passo 4.
 
 Duas notas sobre a string:
 
@@ -86,13 +97,13 @@ para **Production**:
 
 | Variável | Valor |
 |---|---|
-| `DATABASE_URL` | a connection string do passo 2 |
+| `DATABASE_URL` | criada pelo integrador do passo 2, ou colada à mão se usaste o neon.tech |
 | `AUTH_SECRET` | o valor que o comando acima imprimiu |
 | `AUTH_GOOGLE_ID` | o Client ID do passo 3 |
 | `AUTH_GOOGLE_SECRET` | o Client secret do passo 3 |
 
 Se usaste o integrador do Vercel no passo 2, o `DATABASE_URL` já lá está — não o
-dupliques.
+dupliques; só faltam as outras três.
 
 Depois de as guardar, faz **Deployments → ⋯ → Redeploy** no último deploy. As
 variáveis só entram em vigor num deploy novo.
