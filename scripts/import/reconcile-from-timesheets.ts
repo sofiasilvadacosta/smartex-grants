@@ -61,22 +61,44 @@ interface Part<T> {
 
 const NAME_NOISE = new Set(["de", "da", "do", "dos", "das", "e"]);
 
-/** Accent- and order-insensitive comparison of two ways of writing a name. */
+/** Accent-insensitive, order-insensitive comparison of two ways of writing a name. */
 function sameName(a: string, b: string): boolean {
   const words = (text: string) =>
-    text
-      .normalize("NFD")
-      .replace(/[̀-ͯ]/g, "")
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
+    normalize(text)
+      .split(" ")
       .filter((word) => word.length > 1 && !NAME_NOISE.has(word));
   const left = words(a);
   const right = words(b);
   if (left.length === 0 || right.length === 0) return false;
-  // Every word of the shorter name has to appear in the longer one, so
-  // "Antonio Rocha" reaches "António Rocha" but not "Ana Rocha".
   const [shorter, longer] = left.length <= right.length ? [left, right] : [right, left];
   return shorter.every((word) => longer.includes(word));
+}
+
+function normalize(text: string): string {
+  return text
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/** Levenshtein distance, bounded: only small edits are of interest here. */
+function editDistance(a: string, b: string): number {
+  if (Math.abs(a.length - b.length) > 2) return 99;
+  let previous = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j++) {
+      current[j] = Math.min(
+        previous[j] + 1,
+        current[j - 1] + 1,
+        previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    previous = current;
+  }
+  return previous[b.length];
 }
 
 function shares<T>(items: T[], size: (item: T) => number): Part<T>[] | null {
@@ -154,22 +176,27 @@ export async function reconcileFromTimesheets(): Promise<TimesheetReconciliation
       where: { projectId: project.id },
       select: { id: true, activity: true, category: true, externalProfile: true },
     });
-    const lineByActivityProfile = new Map<string, string>();
-    // Some projects name the person in the line itself ("Antonio Rocha,
-    // Desenvolvimento de hardware"), which identifies it more precisely than any
-    // profile does. Indexed separately and tried first.
-    const linesByActivity = new Map<number, { id: string; namePart: string }[]>();
+    // Every way a line can be named, per activity: the funder's job title in
+    // externalProfile, and the internal role the category carries after the
+    // name it is prefixed with ("Miguel Ribeiro, Gestor de Projeto" -> "Gestor
+    // de Projeto").
+    //
+    // The name in that prefix is deliberately not used. On TexQualis it names
+    // people who never worked on the project — it is a stale internal note, not
+    // part of what the funder approved — so matching on it would attach real
+    // money to a line on the strength of a wrong name.
+    const lineNames = new Map<number, { id: string; label: string }[]>();
     for (const line of budgetLines) {
       const number = activityNumber(line.activity);
       if (number === null) continue;
-      for (const name of [line.externalProfile, line.category]) {
-        if (!name) continue;
-        const key = `${number}|${name.trim().toLowerCase()}`;
-        if (!lineByActivityProfile.has(key)) lineByActivityProfile.set(key, line.id);
+      const list = lineNames.get(number) ?? [];
+      const afterComma = line.category.includes(",")
+        ? line.category.slice(line.category.indexOf(",") + 1)
+        : line.category;
+      for (const label of [line.externalProfile, afterComma, line.category]) {
+        if (label && label.trim()) list.push({ id: line.id, label: label.trim() });
       }
-      const list = linesByActivity.get(number) ?? [];
-      list.push({ id: line.id, namePart: line.category.split(",")[0] });
-      linesByActivity.set(number, list);
+      lineNames.set(number, list);
     }
 
     // Each person's profile per activity, from the approved staffing plan.
@@ -232,14 +259,8 @@ export async function reconcileFromTimesheets(): Promise<TimesheetReconciliation
       const lineFor = (activity: string): string | undefined => {
         const number = activityNumber(activity);
         if (number === null) return undefined;
-
-        // The person's own line, where the project names people in its budget.
-        // Preferred over any profile: it is the funder approving this person for
-        // this activity, not a category they happen to fall into.
-        const named = (linesByActivity.get(number) ?? []).filter((line) =>
-          sameName(line.namePart, entry.name),
-        );
-        if (named.length === 1) return named[0].id;
+        const candidates = lineNames.get(number);
+        if (!candidates) return undefined;
 
         const profiles = profilesByPerson.get(personId);
         const profile =
@@ -248,7 +269,46 @@ export async function reconcileFromTimesheets(): Promise<TimesheetReconciliation
           // even on an activity the plan does not list them on.
           (profiles?.size === 1 ? [...profiles][0] : undefined);
         if (profile === undefined) return undefined;
-        return lineByActivityProfile.get(`${number}|${profile.trim().toLowerCase()}`);
+
+        // The plan writes a profile either as the funder's title, as Smartex's
+        // own role, or as both joined by a slash ("Desenvolvimento de hardware /
+        // Técnico Especialista"), so each part is tried on its own.
+        const wanted = [profile, ...profile.split("/")].map((part) => part.trim()).filter(Boolean);
+
+        // Where a role is shared by several lines, the name the category is
+        // prefixed with breaks the tie — but only ever as a tie-break among lines
+        // the role already selected. A line is never chosen on a name alone:
+        // those prefixes are internal notes, and on this project two of them name
+        // people who never worked on it.
+        const narrow = (matches: { id: string; label: string }[]): string | undefined => {
+          const ids = new Set(matches.map((m) => m.id));
+          if (ids.size === 1) return [...ids][0];
+          if (ids.size === 0) return undefined;
+          const named = new Set(
+            budgetLines
+              .filter(
+                (line) =>
+                  ids.has(line.id) && sameName(line.category.split(",")[0], entry.name),
+              )
+              .map((line) => line.id),
+          );
+          return named.size === 1 ? [...named][0] : undefined;
+        };
+
+        for (const want of wanted) {
+          const hit = narrow(candidates.filter((line) => normalize(line.label) === normalize(want)));
+          if (hit) return hit;
+        }
+        // Only then, a near miss: the plan and the budget spell the same role
+        // differently ("Gestor de Projecto" against "Gestor de Projeto"). Still
+        // required to land on exactly one line.
+        for (const want of wanted) {
+          const hit = narrow(
+            candidates.filter((line) => editDistance(normalize(line.label), normalize(want)) <= 2),
+          );
+          if (hit) return hit;
+        }
+        return undefined;
       };
 
       // Parts of equal size cannot be told apart by proportion. Rather than drop
@@ -282,12 +342,22 @@ export async function reconcileFromTimesheets(): Promise<TimesheetReconciliation
           continue;
         }
         if (group.length > 1 && new Set(lines).size > 1) {
-          stats.ambiguousTies.push(
-            `${label}: ${group.length} partes iguais ` +
-              `(${group.map((i) => (hourParts[i].share * 100).toFixed(1) + "%").join("/")}) ` +
-              `em atividades diferentes — não se sabe qual é qual`,
-          );
-          continue;
+          // Equal shares of one month produce equal amounts, and equal amounts
+          // are interchangeable: whichever way round they go, each activity ends
+          // up with the same euros. The pairing within such a group is arbitrary
+          // and the result is not. Only a group whose amounts actually differ is
+          // a real ambiguity, and only that is held back.
+          const values = group.map((index) => costParts[index].item.value);
+          const identical = values.every((value) => Math.abs(value - values[0]) <= 0.01);
+          if (!identical) {
+            stats.ambiguousTies.push(
+              `${label}: ${group.length} partes com proporções iguais ` +
+                `(${group.map((i) => (hourParts[i].share * 100).toFixed(1) + "%").join("/")}) ` +
+                `mas valores diferentes (${values.map((v) => v.toFixed(2)).join("/")} €) — ` +
+                `não se sabe qual é qual`,
+            );
+            continue;
+          }
         }
         for (const index of group) {
           pairs.push({
