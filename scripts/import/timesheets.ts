@@ -4,6 +4,7 @@ import type ExcelJS from "exceljs";
 import { prisma } from "../../src/lib/db";
 import { asNumber, asString, loadWorkbook } from "./lib/workbook";
 import { activityNumber } from "../../src/lib/timesheet";
+import { resolvePersonByName } from "./lib/people-match";
 
 /**
  * Reads the funder's "Mapa de horas/ETI" workbooks (COMPETE2030 layout).
@@ -94,31 +95,24 @@ function projectNumber(sheet: ExcelJS.Worksheet): string | null {
 }
 
 /**
- * Resolves "Seven" or "Seven Shurygin" to a person. The form holds a first name
- * or a nickname, so an exact match is tried first and a unique prefix second —
- * an ambiguous name is reported rather than guessed, because attributing hours to
- * the wrong technician is worse than not importing them.
+ * Resolves the header's technician to a person. The form holds a first name or a
+ * nickname, so the shared matcher's rules apply; an ambiguous name is reported
+ * rather than guessed, because attributing hours to the wrong technician is
+ * worse than not importing them.
  */
 async function resolvePerson(name: string): Promise<{ id: string } | { error: string }> {
-  const exact = await prisma.person.findMany({
-    where: { name: { equals: name, mode: "insensitive" } },
-    select: { id: true },
-  });
-  if (exact.length === 1) return exact[0];
+  const people = await prisma.person.findMany({ select: { id: true, name: true } });
+  const resolved = resolvePersonByName(name, people);
+  return resolved.personId === null ? { error: resolved.reason } : { id: resolved.personId };
+}
 
-  const prefix = await prisma.person.findMany({
-    where: { name: { startsWith: name, mode: "insensitive" } },
-    select: { id: true, name: true },
-  });
-  if (prefix.length === 1) return { id: prefix[0].id };
-  if (prefix.length > 1) {
-    return {
-      error: `"${name}" corresponde a ${prefix.length} pessoas (${prefix
-        .map((p) => p.name)
-        .join(", ")}) — nome demasiado curto para atribuir horas`,
-    };
-  }
-  return { error: `"${name}" não corresponde a nenhuma pessoa` };
+function normalize(text: string): string {
+  return text
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 /**
@@ -167,15 +161,6 @@ function filenameDisagreement(
     );
   }
   return null;
-}
-
-function normalize(text: string): string {
-  return text
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
 }
 
 export async function importTimesheet(
@@ -442,6 +427,58 @@ export async function importTimesheet(
   }
 
   return summary;
+}
+
+/**
+ * Reads only who a workbook says it is about, so several files claiming the same
+ * technician can be found before any of them is written.
+ *
+ * Two files for one person is not something to resolve by picking one: they are
+ * two versions of a payment request's evidence, and whichever loses would be
+ * silently discarded. Both are skipped and reported so the stale one can be
+ * deleted.
+ */
+export interface TimesheetIdentity {
+  projectNumber: string | null;
+  technician: string | null;
+  /**
+   * False when the filename contradicts the header. Such a file is already a
+   * known defect, so it must not be allowed to collide with a sound one and hold
+   * it back — the sound file is the one that should be imported.
+   */
+  consistent: boolean;
+}
+
+export async function readTimesheetIdentity(
+  filePath: string,
+  projectCodeByNumber: Record<string, string>,
+  projectCodeByName: Map<string, string>,
+): Promise<TimesheetIdentity> {
+  if (!existsSync(filePath)) return { projectNumber: null, technician: null, consistent: false };
+  const workbook = await loadWorkbook(filePath);
+  const sheet = workbook.worksheets.find((candidate) => /^\d{4}$/.test(candidate.name.trim()));
+  if (!sheet) return { projectNumber: null, technician: null, consistent: false };
+
+  const number = projectNumber(sheet);
+  const technician = technicianName(sheet);
+  const code = number ? projectCodeByNumber[number] : undefined;
+  const consistent =
+    number !== null &&
+    technician !== null &&
+    code !== undefined &&
+    filenameDisagreement(filePath, code, technician, projectCodeByName) === null;
+
+  return { projectNumber: number, technician, consistent };
+}
+
+/** Project codes by every name a filename might use for them. */
+export async function projectNameIndex(): Promise<Map<string, string>> {
+  const index = new Map<string, string>();
+  for (const project of await prisma.project.findMany({ select: { code: true, name: true } })) {
+    index.set(normalize(project.code), project.code);
+    index.set(normalize(project.name), project.code);
+  }
+  return index;
 }
 
 /** Every Timesheet_*.xlsx in the imports directory. */

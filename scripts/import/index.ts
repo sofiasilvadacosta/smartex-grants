@@ -17,7 +17,12 @@ import { importDeslocacoes } from "./pp-deslocacoes";
 import { importDecisoes } from "./pp-decisoes";
 import { importTexpactPedidos } from "./texpact-pedidos";
 import { importReceipts } from "./receipts";
-import { findTimesheetFiles, importTimesheet } from "./timesheets";
+import {
+  findTimesheetFiles,
+  importTimesheet,
+  projectNameIndex,
+  readTimesheetIdentity,
+} from "./timesheets";
 import { reconcileFromTimesheets } from "./reconcile-from-timesheets";
 import { syncPaymentRequestsFromExecution } from "./lib/sync-payment-requests";
 
@@ -379,9 +384,42 @@ async function main() {
     ).map((p) => [p.externalNumber!, p.code]),
   );
   const timesheetFiles = findTimesheetFiles(IMPORTS_DIR);
+
+  // Two workbooks claiming the same technician on the same project are two
+  // versions of one payment request's evidence. Importing both would let
+  // whichever is read last silently overwrite the other, so neither is read and
+  // both are named — deleting the stale one is a decision for a human.
+  // Files whose filename already contradicts their header are left out of the
+  // grouping: they are a known defect and must not hold back a sound file they
+  // happen to collide with. The per-file import reports them on its own.
+  const nameIndex = await projectNameIndex();
+  const claimedBy = new Map<string, string[]>();
+  for (const file of timesheetFiles) {
+    const { projectNumber, technician, consistent } = await readTimesheetIdentity(
+      file,
+      PROJECT_CODE_BY_NUMBER,
+      nameIndex,
+    );
+    if (!projectNumber || !technician || !consistent) continue;
+    const key = `${projectNumber}|${technician.trim().toLowerCase()}`;
+    claimedBy.set(key, [...(claimedBy.get(key) ?? []), path.basename(file)]);
+  }
+  const contested = new Set<string>();
+  for (const [key, files] of claimedBy) {
+    if (files.length < 2) continue;
+    for (const file of files) contested.add(file);
+    console.warn(
+      `\n⚠ ${files.length} ficheiros dizem ser do mesmo técnico no mesmo projeto ` +
+        `(${key.split("|")[1]}, projeto ${key.split("|")[0]}):\n` +
+        files.map((f) => `    - ${f}`).join("\n") +
+        `\n  Nenhum foi importado — apaga o que está desatualizado.`,
+    );
+  }
+
   if (timesheetFiles.length > 0) {
     console.log(`\nImporting ${timesheetFiles.length} mapa(s) de horas/ETI...`);
     for (const file of timesheetFiles) {
+      if (contested.has(path.basename(file))) continue;
       const summary = await importTimesheet(file, PROJECT_CODE_BY_NUMBER, projectIds);
       if (!summary) continue;
       console.log(`${path.basename(file)}:`, JSON.stringify(summary, null, 2));

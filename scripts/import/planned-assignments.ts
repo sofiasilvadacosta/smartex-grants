@@ -1,5 +1,6 @@
 import { prisma } from "../../src/lib/db";
 import { asNumber, asString, loadWorkbook } from "./lib/workbook";
+import { resolvePersonByName } from "./lib/people-match";
 
 /**
  * The per-project sheets of the planning workbook: one row per
@@ -52,70 +53,18 @@ export interface PlannedAssignmentsSummary {
  * Seven"), meaning either of them may do the work, so it becomes one row each.
  * A name that matches nobody is reported, never guessed at.
  */
-/** Accent- and case-insensitive, so "Antonio Rocha" reaches "António Rocha". */
-function normalize(text: string): string {
-  return text
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/** Words worth matching on: drops the connectives Portuguese names are full of. */
-const NAME_NOISE = new Set(["de", "da", "do", "dos", "das", "e"]);
-
-function nameWords(text: string): string[] {
-  return normalize(text)
-    .split(" ")
-    .filter((word) => word.length > 1 && !NAME_NOISE.has(word));
-}
-
 async function resolveNames(
   cell: string,
   people: { id: string; name: string }[],
 ): Promise<{ parts: { raw: string; personId: string | null }[] }> {
+  // A collaborator cell often names two people ("Joana Anjo / Seven"), meaning
+  // either of them may do the work, so it becomes one row each.
   const parts = cell
     .split("/")
     .map((part) => part.trim())
     .filter(Boolean);
-
   return {
-    parts: parts.map((raw) => {
-      const target = normalize(raw);
-      const unique = (matches: { id: string }[]) =>
-        matches.length === 1 ? { raw, personId: matches[0].id } : null;
-
-      // Each rule is only trusted when it lands on exactly one person: putting
-      // someone else's hours on a budget line is worse than leaving a gap.
-      return (
-        unique(people.filter((p) => normalize(p.name) === target)) ??
-        unique(
-          people.filter(
-            (p) => normalize(p.name).startsWith(target) || target.startsWith(normalize(p.name)),
-          ),
-        ) ??
-        // "Ricardo Jorge Gonçalves" against "Ricardo Gonçalves".
-        unique(
-          people.filter((p) => {
-            const a = nameWords(p.name);
-            const b = nameWords(raw);
-            return a.length >= 2 && b.length >= 2 && a[0] === b[0] && a.at(-1) === b.at(-1);
-          }),
-        ) ??
-        // "Hiroshi Haji" inside "Ewerton Hiroshi de Souza Haji": every word of
-        // the shorter name appears in the longer, in any position.
-        unique(
-          people.filter((p) => {
-            const a = nameWords(p.name);
-            const b = nameWords(raw);
-            if (a.length < 2 || b.length < 2) return false;
-            const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
-            return shorter.every((word) => longer.includes(word));
-          }),
-        ) ?? { raw, personId: null }
-      );
-    }),
+    parts: parts.map((raw) => ({ raw, personId: resolvePersonByName(raw, people).personId })),
   };
 }
 
