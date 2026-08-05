@@ -83,6 +83,26 @@ function normalize(text: string): string {
     .trim();
 }
 
+/**
+ * How well two ways of naming a role agree: 3 identical, 2 the same words spelled
+ * differently ("Gestor de Projecto" against "Gestor de Projeto"), 1 one contained
+ * in the other ("Mechanical Engineering" inside "Especialista em Mechanical
+ * Engineering"), 0 unrelated. Only the best level found is used, so a weaker
+ * agreement never competes with a stronger one.
+ */
+function match(label: string, want: string): number {
+  const left = normalize(label);
+  const right = normalize(want);
+  if (!left || !right) return 0;
+  if (left === right) return 3;
+  if (editDistance(left, right) <= 2) return 2;
+  const words = (text: string) => text.split(" ").filter((word) => word.length > 1);
+  const wanted = words(right);
+  const present = words(left);
+  if (wanted.length > 0 && wanted.every((word) => present.includes(word))) return 1;
+  return 0;
+}
+
 /** Levenshtein distance, bounded: only small edits are of interest here. */
 function editDistance(a: string, b: string): number {
   if (Math.abs(a.length - b.length) > 2) return 99;
@@ -176,27 +196,29 @@ export async function reconcileFromTimesheets(): Promise<TimesheetReconciliation
       where: { projectId: project.id },
       select: { id: true, activity: true, category: true, externalProfile: true },
     });
-    // Every way a line can be named, per activity: the funder's job title in
-    // externalProfile, and the internal role the category carries after the
-    // name it is prefixed with ("Miguel Ribeiro, Gestor de Projeto" -> "Gestor
-    // de Projeto").
+    // Each approved line, split into the two things that identify it: the role
+    // Smartex calls it (the part of the category after the name it is prefixed
+    // with) and the funder's own job title.
     //
-    // The name in that prefix is deliberately not used. On TexQualis it names
-    // people who never worked on the project — it is a stale internal note, not
-    // part of what the funder approved — so matching on it would attach real
-    // money to a line on the strength of a wrong name.
-    const lineNames = new Map<number, { id: string; label: string }[]>();
+    // The name in that prefix is who the *application* said would do the work.
+    // People change, so it is not what identifies a line — it is only ever used
+    // to separate two lines the role has already selected.
+    const linesByActivity = new Map<
+      number,
+      { id: string; role: string; external: string; name: string }[]
+    >();
     for (const line of budgetLines) {
       const number = activityNumber(line.activity);
       if (number === null) continue;
-      const list = lineNames.get(number) ?? [];
-      const afterComma = line.category.includes(",")
-        ? line.category.slice(line.category.indexOf(",") + 1)
-        : line.category;
-      for (const label of [line.externalProfile, afterComma, line.category]) {
-        if (label && label.trim()) list.push({ id: line.id, label: label.trim() });
-      }
-      lineNames.set(number, list);
+      const comma = line.category.indexOf(",");
+      const list = linesByActivity.get(number) ?? [];
+      list.push({
+        id: line.id,
+        role: (comma >= 0 ? line.category.slice(comma + 1) : line.category).trim(),
+        external: (line.externalProfile ?? "").trim(),
+        name: comma >= 0 ? line.category.slice(0, comma).trim() : "",
+      });
+      linesByActivity.set(number, list);
     }
 
     // Each person's profile per activity, from the approved staffing plan.
@@ -259,7 +281,7 @@ export async function reconcileFromTimesheets(): Promise<TimesheetReconciliation
       const lineFor = (activity: string): string | undefined => {
         const number = activityNumber(activity);
         if (number === null) return undefined;
-        const candidates = lineNames.get(number);
+        const candidates = linesByActivity.get(number);
         if (!candidates) return undefined;
 
         const profiles = profilesByPerson.get(personId);
@@ -270,45 +292,32 @@ export async function reconcileFromTimesheets(): Promise<TimesheetReconciliation
           (profiles?.size === 1 ? [...profiles][0] : undefined);
         if (profile === undefined) return undefined;
 
-        // The plan writes a profile either as the funder's title, as Smartex's
-        // own role, or as both joined by a slash ("Desenvolvimento de hardware /
-        // Técnico Especialista"), so each part is tried on its own.
-        const wanted = [profile, ...profile.split("/")].map((part) => part.trim()).filter(Boolean);
+        // The plan writes a profile as "<role> / <funder title>" when it knows
+        // both. That pair is what separates two lines sharing a role: TexQualis
+        // activity 2 has "Desenvolvimento de hardware" twice, and only the funder
+        // title tells the two apart.
+        const [rolePart, externalPart] = profile.includes("/")
+          ? profile.split("/").map((part) => part.trim())
+          : [profile.trim(), undefined];
 
-        // Where a role is shared by several lines, the name the category is
-        // prefixed with breaks the tie — but only ever as a tie-break among lines
-        // the role already selected. A line is never chosen on a name alone:
-        // those prefixes are internal notes, and on this project two of them name
-        // people who never worked on it.
-        const narrow = (matches: { id: string; label: string }[]): string | undefined => {
-          const ids = new Set(matches.map((m) => m.id));
-          if (ids.size === 1) return [...ids][0];
-          if (ids.size === 0) return undefined;
-          const named = new Set(
-            budgetLines
-              .filter(
-                (line) =>
-                  ids.has(line.id) && sameName(line.category.split(",")[0], entry.name),
-              )
-              .map((line) => line.id),
-          );
-          return named.size === 1 ? [...named][0] : undefined;
-        };
+        const score = (line: (typeof candidates)[number]): number =>
+          externalPart === undefined
+            ? Math.max(match(line.role, rolePart), match(line.external, rolePart))
+            : Math.min(match(line.role, rolePart), match(line.external, externalPart));
 
-        for (const want of wanted) {
-          const hit = narrow(candidates.filter((line) => normalize(line.label) === normalize(want)));
-          if (hit) return hit;
-        }
-        // Only then, a near miss: the plan and the budget spell the same role
-        // differently ("Gestor de Projecto" against "Gestor de Projeto"). Still
-        // required to land on exactly one line.
-        for (const want of wanted) {
-          const hit = narrow(
-            candidates.filter((line) => editDistance(normalize(line.label), normalize(want)) <= 2),
-          );
-          if (hit) return hit;
-        }
-        return undefined;
+        const scored = candidates.map((line) => ({ line, score: score(line) }));
+        const best = Math.max(0, ...scored.map((entry) => entry.score));
+        if (best === 0) return undefined;
+        const winners = scored.filter((entry) => entry.score === best).map((entry) => entry.line);
+        const ids = new Set(winners.map((line) => line.id));
+        if (ids.size === 1) return [...ids][0];
+
+        // Still tied: the name the category is prefixed with breaks it, but only
+        // among lines the role has already selected. A line is never chosen on a
+        // name alone — those names are who the application said would do the
+        // work, and people change.
+        const named = winners.filter((line) => sameName(line.name, entry.name));
+        return named.length === 1 ? named[0].id : undefined;
       };
 
       // Parts of equal size cannot be told apart by proportion. Rather than drop
