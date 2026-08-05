@@ -18,6 +18,7 @@ import { importDecisoes } from "./pp-decisoes";
 import { importTexpactPedidos } from "./texpact-pedidos";
 import { importReceipts } from "./receipts";
 import { findTimesheetFiles, importTimesheet } from "./timesheets";
+import { reconcileFromTimesheets } from "./reconcile-from-timesheets";
 import { syncPaymentRequestsFromExecution } from "./lib/sync-payment-requests";
 
 const IMPORTS_DIR = path.resolve(__dirname, "../../imports");
@@ -367,9 +368,16 @@ async function main() {
   }
 
   // The funder identifies a project by its own number on the timesheet form.
-  const PROJECT_CODE_BY_NUMBER: Record<string, string> = {
-    "20783": "TEXQUALIS",
-  };
+  // Read from the projects themselves, so a new project's number is filled in on
+  // its page rather than in this file.
+  const PROJECT_CODE_BY_NUMBER: Record<string, string> = Object.fromEntries(
+    (
+      await prisma.project.findMany({
+        where: { externalNumber: { not: null } },
+        select: { code: true, externalNumber: true },
+      })
+    ).map((p) => [p.externalNumber!, p.code]),
+  );
   const timesheetFiles = findTimesheetFiles(IMPORTS_DIR);
   if (timesheetFiles.length > 0) {
     console.log(`\nImporting ${timesheetFiles.length} mapa(s) de horas/ETI...`);
@@ -410,6 +418,33 @@ async function main() {
         );
       }
     }
+  }
+
+  // After the timesheets: pairing a month's cost rows to its activities needs
+  // both sides present.
+  console.log("\nReconciling FTE-priced personnel against the timesheets...");
+  const paired = await reconcileFromTimesheets();
+  for (const [code, s] of Object.entries(paired.byProject)) {
+    console.log(
+      `${code}: ${s.rowsMatched} linhas ligadas (${s.valueMatched.toFixed(2)} €) em ` +
+        `${s.monthsPaired} mês(es) pessoa/mês`,
+    );
+    const report = (label: string, items: string[]) => {
+      if (items.length === 0) return;
+      console.warn(`\n⚠ ${code} — ${label} (${items.length}):`);
+      for (const item of items.slice(0, 12)) console.warn(`    - ${item}`);
+      if (items.length > 12) console.warn(`    … e mais ${items.length - 12}`);
+    };
+    if (s.monthsWithoutTimesheet > 0) {
+      console.warn(
+        `\n⚠ ${code}: ${s.monthsWithoutTimesheet} pessoa/mês com custo declarado mas sem mapa\n` +
+          `  de horas — sem ele não se sabe a que atividade pertence.`,
+      );
+    }
+    report("nº de partes diferente entre o pedido e o mapa", s.partCountMismatch);
+    report("proporções que não coincidem", s.shapeMismatch);
+    report("partes iguais, impossíveis de distinguir", s.ambiguousTies);
+    report("sem rubrica aprovada para a atividade/perfil", s.noBudgetLine);
   }
 
   // Receipts run last: linking a transfer to a request needs every request and

@@ -121,6 +121,63 @@ async function resolvePerson(name: string): Promise<{ id: string } | { error: st
   return { error: `"${name}" não corresponde a nenhuma pessoa` };
 }
 
+/**
+ * Checks the filename against what the sheet's own header says.
+ *
+ * These workbooks are made by copying someone else's and editing it, and the
+ * header is the part people forget. A file named for one person and one project
+ * whose header names another is not a naming quirk — one of the two is wrong, and
+ * importing it would put a technician's hours on a project neither of them
+ * agreed on. Reported and skipped rather than resolved by preferring one side.
+ */
+function filenameDisagreement(
+  filePath: string,
+  headerProjectCode: string,
+  headerTechnician: string,
+  projectCodeByName: Map<string, string>,
+): string | null {
+  const base = path.basename(filePath).replace(/\.xlsx$/i, "");
+  const match = /^Timesheet_([^_]+)_(.+)$/i.exec(base);
+  if (!match) return null;
+  const [, projectPart, technicianPart] = match;
+
+  const fromName = projectCodeByName.get(normalize(projectPart));
+  if (fromName && fromName !== headerProjectCode) {
+    return (
+      `o nome do ficheiro diz projeto "${projectPart}" mas o cabeçalho diz ${headerProjectCode} ` +
+      `— um dos dois está errado`
+    );
+  }
+
+  // Names are compared on words rather than exactly: files carry "WilsonSeabra"
+  // and headers "Wilson Seabra", and a first name alone is a normal shorthand.
+  const nameWords = normalize(technicianPart).split(" ").filter(Boolean);
+  const headerWords = normalize(headerTechnician).split(" ").filter(Boolean);
+  const glued = nameWords.join("");
+  const headerGlued = headerWords.join("");
+  const shares =
+    nameWords.some((word) => headerWords.includes(word)) ||
+    glued === headerGlued ||
+    headerGlued.includes(glued) ||
+    glued.includes(headerGlued);
+  if (!shares) {
+    return (
+      `o nome do ficheiro diz técnico "${technicianPart}" mas o cabeçalho diz ` +
+      `"${headerTechnician}" — um dos dois está errado`
+    );
+  }
+  return null;
+}
+
+function normalize(text: string): string {
+  return text
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 export async function importTimesheet(
   filePath: string,
   projectCodeByNumber: Record<string, string>,
@@ -182,6 +239,23 @@ export async function importTimesheet(
   const projectId = projectIdByCode[code];
   if (!projectId) {
     summary.problems.push(`Projeto ${code} não existe na base de dados.`);
+    return summary;
+  }
+
+  const projects = await prisma.project.findMany({ select: { code: true, name: true } });
+  const projectCodeByName = new Map<string, string>();
+  for (const project of projects) {
+    projectCodeByName.set(normalize(project.code), project.code);
+    projectCodeByName.set(normalize(project.name), project.code);
+  }
+  const disagreement = filenameDisagreement(
+    filePath,
+    code,
+    summary.technician,
+    projectCodeByName,
+  );
+  if (disagreement) {
+    summary.problems.push(disagreement);
     return summary;
   }
 
