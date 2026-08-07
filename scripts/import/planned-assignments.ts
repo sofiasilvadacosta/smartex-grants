@@ -1,6 +1,6 @@
 import { prisma } from "../../src/lib/db";
 import { asNumber, asString, loadWorkbook } from "./lib/workbook";
-import { resolvePersonByName } from "./lib/people-match";
+import { resolvePersonByName } from "../../src/lib/people-match";
 
 /**
  * The per-project sheets of the planning workbook: one row per

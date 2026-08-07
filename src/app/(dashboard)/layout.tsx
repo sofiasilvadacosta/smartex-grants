@@ -20,6 +20,11 @@ export default async function DashboardLayout({
             <Link href="/pessoas" className="hover:text-gray-900">
               Pessoas
             </Link>
+            {session?.user?.role === "ADMIN" && (
+              <Link href="/integracoes/hibob" className="hover:text-gray-900">
+                Integrações
+              </Link>
+            )}
           </nav>
           <div className="flex items-center gap-4 text-sm text-gray-500">
             <span>{session?.user?.email}</span>

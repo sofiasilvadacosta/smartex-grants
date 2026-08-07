@@ -311,7 +311,13 @@ model Invoice {
 model Person {
   id        String    @id @default(cuid())
   name      String
+  // Smartex's own two- or three-letter key. Not from HR: it is what the planning
+  // sheet uses to attribute hours, so it stays even once people come from HiBob.
   initials  String    @unique
+  // The reliable keys for matching a person to the HR system. Names are written
+  // half a dozen ways across the source files; these are not.
+  email     String?   @unique
+  hibobId   String?   @unique
   profile   String?
   entryDate DateTime?
   exitDate  DateTime?

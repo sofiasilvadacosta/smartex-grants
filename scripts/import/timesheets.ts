@@ -4,7 +4,7 @@ import type ExcelJS from "exceljs";
 import { prisma } from "../../src/lib/db";
 import { asNumber, asString, loadWorkbook } from "./lib/workbook";
 import { activityNumber } from "../../src/lib/timesheet";
-import { resolvePersonByName } from "./lib/people-match";
+import { resolvePersonByName } from "../../src/lib/people-match";
 
 /**
  * Reads the funder's "Mapa de horas/ETI" workbooks (COMPETE2030 layout).
