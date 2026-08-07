@@ -47,9 +47,21 @@ export async function updateProjectIdentity(formData: FormData) {
     throw new Error("Número do projeto inválido");
   }
 
+  // Entered as a percentage because that is how the funder writes it, stored as
+  // a fraction because that is how it is multiplied.
+  const rateInput = String(formData.get("incentiveRate") ?? "").trim().replace(",", ".");
+  let incentiveRate: number | null = null;
+  if (rateInput) {
+    const percent = Number(rateInput);
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+      throw new Error("Taxa de incentivo tem de ser uma percentagem entre 0 e 100");
+    }
+    incentiveRate = percent / 100;
+  }
+
   await prisma.project.update({
     where: { id },
-    data: { fundingProgram, externalNumber, updatedById: user.id },
+    data: { fundingProgram, externalNumber, incentiveRate, updatedById: user.id },
   });
   revalidatePath(`/projetos/${id}`);
   revalidatePath("/projetos");

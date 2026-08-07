@@ -115,6 +115,11 @@ model Project {
   // execution for these projects is entered as FTE and multiplied by this rate.
   // Null for projects that report real invoiced/salary costs.
   fteRate        Decimal?      @db.Decimal(12, 2)
+  // Share of eligible cost the funder pays, as a fraction (0.70 for 70%). This
+  // is what turns "what we may spend" into "what we will be paid", so it is the
+  // last figure a payment request needs. Null when the project has no single
+  // rate and every line carries its own.
+  incentiveRate  Decimal?      @db.Decimal(6, 4)
 
   budgetLines      BudgetLine[]
   invoices         Invoice[]
@@ -161,6 +166,10 @@ model BudgetLine {
   // Approved FTE for this line; the € below is plannedFte × Project.fteRate.
   plannedFte      Decimal? @db.Decimal(8, 2)
   eligibleCost    Decimal  @db.Decimal(14, 2)
+  // The rate for this line when it differs from the project's — on Produtech and
+  // TexP@ct the funder pays a different share by TRL phase. Null means the
+  // project's rate applies.
+  incentiveRate   Decimal? @db.Decimal(6, 4)
   financingAmount Decimal  @db.Decimal(14, 2)
   // Denormalized cache of SUM(Invoice.eligibleAmount) + SUM(PersonnelAllocation.eligibleValue)
   // for this line, recomputed transactionally whenever a linked row's

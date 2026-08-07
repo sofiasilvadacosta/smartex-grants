@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { declaredVsExecuted } from "@/lib/declared-vs-executed";
 import { projectReceipts } from "@/lib/receipts";
 import { budgetLineLabel, eur } from "@/lib/format";
+import { incentiveTotals, ratePercent, rateFor } from "@/lib/incentive";
 import { createBudgetLine, updateBudgetLine, updateProjectIdentity } from "../actions";
 
 export default async function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -59,6 +60,8 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
     .sort((a, b) => b.excess - a.excess);
   const overBudgetTotal = overBudget.reduce((s, r) => s + r.excess, 0);
 
+  const incentive = incentiveTotals(project.budgetLines, project.incentiveRate);
+
   return (
     <div>
       <div className="flex items-center justify-between">
@@ -91,10 +94,24 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
                 className="ml-1 w-24 rounded border border-gray-300 px-1 py-0.5"
               />
             </label>
+            <label>
+              Taxa de incentivo (%)
+              <input
+                name="incentiveRate"
+                inputMode="decimal"
+                defaultValue={
+                  project.incentiveRate === null
+                    ? ""
+                    : String(Number(project.incentiveRate) * 100)
+                }
+                placeholder="70"
+                className="ml-1 w-16 rounded border border-gray-300 px-1 py-0.5"
+                title="Deixa vazio quando cada rubrica tem a sua taxa (Produtech, TexP@ct)"
+              />
+            </label>
             <button type="submit" className="underline hover:text-gray-900">
               guardar
             </button>
-            <span className="text-gray-400">— usados no cabeçalho do mapa de horas</span>
           </form>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -151,10 +168,16 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
         <div className="rounded-lg border border-gray-200 bg-white p-4">
           <dt className="text-xs text-gray-500">Orçamento elegível</dt>
           <dd className="mt-1 text-lg font-semibold text-gray-900">{eur(totalEligible)}</dd>
+          <dd className="mt-1 text-xs text-gray-500">
+            incentivo aprovado {eur(incentive.approvedIncentive)}
+          </dd>
         </div>
         <div className="rounded-lg border border-gray-200 bg-white p-4">
           <dt className="text-xs text-gray-500">Executado</dt>
           <dd className="mt-1 text-lg font-semibold text-gray-900">{eur(totalExecuted)}</dd>
+          <dd className="mt-1 text-xs text-gray-500">
+            a receber {eur(incentive.executedIncentive)}
+          </dd>
         </div>
         <div className="rounded-lg border border-gray-200 bg-white p-4">
           <dt className="text-xs text-gray-500">Por executar</dt>
@@ -175,6 +198,20 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
           </dd>
         </div>
       </dl>
+
+      {incentive.linesWithoutRate > 0 && (
+        <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <p className="font-medium">
+            {incentive.linesWithoutRate} rubrica(s) sem taxa de incentivo —{" "}
+            {eur(incentive.eligibleWithoutRate)} de orçamento
+          </p>
+          <p className="mt-1 text-xs">
+            O incentivo destas rubricas não entra nos totais acima. Define a taxa do projeto no
+            campo em cima, ou uma taxa por rubrica quando o financiador paga percentagens
+            diferentes por fase TRL.
+          </p>
+        </div>
+      )}
 
       {divergences.length > 0 && (
         <section className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
@@ -264,7 +301,7 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
                 <th className="px-4 py-2 text-left font-medium text-gray-500">Fase TRL</th>
               )}
               <th className="px-4 py-2 text-right font-medium text-gray-500">Custo elegível</th>
-              <th className="px-4 py-2 text-right font-medium text-gray-500">Financiamento</th>
+              <th className="px-4 py-2 text-right font-medium text-gray-500">Incentivo</th>
               <th className="px-4 py-2 text-right font-medium text-gray-500">Executado</th>
               {hasDeclared && (
                 <th className="px-4 py-2 text-right font-medium text-gray-500">Declarado</th>
@@ -278,6 +315,7 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
               const eligibleCost = Number(line.eligibleCost);
               const executedAmount = Number(line.executedAmount);
               const remaining = eligibleCost - executedAmount;
+              const lineRate = rateFor(line, project.incentiveRate);
               return (
                 <tr key={line.id} className="hover:bg-gray-50">
                   {hasOrderNumbers && (
@@ -295,7 +333,17 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
                     <td className="px-4 py-2 text-gray-500">{line.trlPhase || "—"}</td>
                   )}
                   <td className="px-4 py-2 text-right text-gray-900">{eur(eligibleCost)}</td>
-                  <td className="px-4 py-2 text-right text-gray-500">{eur(Number(line.financingAmount))}</td>
+                  <td className="px-4 py-2 text-right text-gray-500">
+                    {lineRate === null ? (
+                      <span className="text-amber-700" title="Sem taxa de incentivo definida">
+                        —
+                      </span>
+                    ) : (
+                      <span title={`${ratePercent(lineRate)} do custo elegível`}>
+                        {eur(eligibleCost * lineRate)}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-2 text-right text-gray-900">{eur(executedAmount)}</td>
                   {hasDeclared && (
                     <td
